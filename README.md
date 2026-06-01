@@ -17,16 +17,12 @@ This repository is the result. It connects one or more BizHawk emulator instance
 ## Preview
 
 <p align="center">
-  <img src="docs/images/example-run.gif" alt="KoopaPilot training run">
+  <img src="docs/images/example-run.gif" alt="KoopaPilot training run" width="568">
 </p>
 
-### Emulator View
-
-![BizHawk emulator view with KoopaPilot overlays](docs/images/emulator-view.png)
-
-### Dashboard
-
-![KoopaPilot training dashboard](docs/images/dashboard-example.png)
+| Emulator View | Dashboard |
+| --- | --- |
+| <img src="docs/images/emulator-view.png" alt="BizHawk emulator view with KoopaPilot overlays"> | <img src="docs/images/dashboard-example.png" alt="KoopaPilot training dashboard"> |
 
 ## Features
 
