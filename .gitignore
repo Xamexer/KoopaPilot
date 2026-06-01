@@ -1,0 +1,47 @@
+# Local tool and editor files
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+build/
+dist/
+
+# Local emulator installation
+BizHawk/
+
+# Copyrighted game files and local shortcuts
+roms/*
+!roms/.gitkeep
+*.sfc
+*.smc
+*.lnk
+
+# Local runtime artifacts
+logs/*
+!logs/.gitkeep
+models/*
+!models/.gitkeep
+savestates/*
+!savestates/.gitkeep
+videos/*
+!videos/.gitkeep
+*.State
+*.state
+*.zip
+*.mp4
+*.png
+!docs/images/*.png
+*.gif
+!docs/images/*.gif
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

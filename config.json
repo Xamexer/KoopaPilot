@@ -1,0 +1,166 @@
+{
+  "paths": {
+    "bizhawk_exe": "./BizHawk/EmuHawk.exe",
+    "rom": "./roms/Super Mario World.sfc",
+    "savestate_dir": "./savestates",
+    "model_dir": "./models",
+    "log_dir": "./logs",
+    "video_dir": "./videos",
+    "lua_script": "./lua/smw_agent.lua"
+  },
+
+  "emulator": {
+    "num_instances": 8,
+    "speed_percent": 6400,
+    "base_port": 9000,
+    "window_width": 400,
+    "window_height": 400,
+    "grid_cols": 4,
+    "grid_rows": 2,
+    "sound_enabled": false,
+    "frame_skip": 4
+  },
+
+  "flags": {
+    "visibility": true,
+    "reward_display": true,
+    "button_input_display": true
+  },
+
+  "level_loading": {
+    "_comment": "Using savestates - use flat/easy levels for early training, avoid athletic/precision levels",
+    "mode": "savestate",
+    "levels": [],
+    "savestate_files": []
+  },
+
+  "ram_addresses": {
+    "mario_x_screen_low": "0x007E",
+    "mario_x_screen_high": "0x007F",
+    "mario_y_screen_low": "0x0080",
+    "mario_y_screen_high": "0x0081",
+    "mario_x_level_low": "0x00D1",
+    "mario_x_level_high": "0x00D2",
+    "mario_y_level_low": "0x00D3",
+    "mario_y_level_high": "0x00D4",
+    "powerup_status": "0x0019",
+    "in_water": "0x0075",
+    "in_air": "0x0072",
+    "on_ground": "0x13EF",
+    "climbing": "0x0074",
+    "ducking": "0x0073",
+    "player_animation": "0x0071",
+    "camera_x_low": "0x001A",
+    "camera_x_high": "0x001B",
+    "camera_y_low": "0x001C",
+    "camera_y_high": "0x001D",
+    "screen_mode": "0x005B",
+    "num_screens": "0x005D",
+    "coin_counter": "0x0DBF",
+    "lives": "0x0DBE",
+    "game_mode": "0x0100",
+    "goal_reached": "0x1493",
+    "sublevel_counter": "0x141A",
+    "pipe_warp_timer": "0x0088",
+    "item_box": "0x0DC2",
+    "star_timer": "0x1497",
+    "invincibility_timer": "0x1490",
+    "p_switch_blue": "0x14AD",
+    "p_switch_silver": "0x14AE",
+    "on_yoshi": "0x187A",
+    "cape_flight": "0x1407",
+    "dash_timer": "0x13E4",
+    "mario_x_speed": "0x007B",
+    "mario_y_speed": "0x007D",
+    "sprite_number_base": "0x009E",
+    "sprite_status_base": "0x14C8",
+    "sprite_x_low_base": "0x00E4",
+    "sprite_x_high_base": "0x14E0",
+    "sprite_y_low_base": "0x00D8",
+    "sprite_y_high_base": "0x14D4",
+    "tile_map_low_base": "0xC800",
+    "tile_map_high_page": "0x7FC800",
+    "translevel_number": "0x13BF"
+  },
+
+  "tile_categories": {
+    "empty": 0,
+    "water": 1,
+    "coin": 2,
+    "vine": 3,
+    "midway": 4,
+    "dangerous": 5,
+    "pipe": 6,
+    "question_block": 7,
+    "turning_block": 8,
+    "throw_block": 9,
+    "half_solid": 10,
+    "solid": 11,
+    "ramp": 12,
+    "door": 13,
+    "slope_right": 14,
+    "slope_left": 15
+  },
+
+  "normalization": {
+    "screen_width": 256,
+    "screen_height": 224,
+    "max_powerup": 3,
+    "tile_categories_count": 16,
+    "max_sprite_id": 255,
+    "sprite_status_active_min": 8,
+    "max_sprite_hitbox_dimension": 128,
+    "grid_size": 21,
+    "tile_size": 16
+  },
+
+  "rewards": {
+    "_comment": "x_progress_per_pixel: reward only for NEW max X (no backtracking reward)",
+    "x_progress_per_pixel": 0.3,
+    "y_progress_per_pixel": 0.3,
+    "goal_reached": 1000.0,
+    "coin_collected": 0.0,
+    "powerup_upgrade": 5.0,
+    "oneup_collected": 0.0,
+    "pipe_door_entered": 50.0,
+    "enemy_killed": 0.0,
+    "enemy_stunned": 0.0,
+    "death_penalty": -30.0,
+    "powerup_downgrade": -10.0,
+    "time_penalty_per_step": -0.01,
+    "teleport_threshold_pixels": 256
+  },
+
+  "ppo": {
+    "learning_rate": 2.5e-4,
+    "lr_schedule": "linear",
+    "n_steps": 128,
+    "batch_size": 256,
+    "n_epochs": 4,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_range": 0.1,
+    "clip_range_schedule": "linear",
+    "ent_coef": 0.01,
+    "vf_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "target_kl": 0.03,
+    "frame_stack": 4,
+    "policy_kwargs": {
+      "net_arch": {
+        "pi": [512, 256],
+        "vf": [512, 256]
+      }
+    },
+    "total_timesteps": 2500000,
+    "save_interval_steps": 100000,
+    "max_episode_steps": 1024,
+    "stagnation_timeout_steps": 300
+  },
+
+  "dashboard": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "poll_interval_seconds": 5
+  }
+}

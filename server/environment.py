@@ -1,0 +1,232 @@
+"""Gymnasium-compatible environment wrapping BizHawk socket communication."""
+
+import logging
+import threading
+import numpy as np
+import gymnasium as gym
+from gymnasium import spaces
+
+from .observation import build_observation, get_observation_size
+from .reward import EpisodeTracker, compute_reward, init_tracker_from_state
+
+logger = logging.getLogger(__name__)
+
+# Discrete action table: each entry is [Right, Left, Up, Down, A, B, ReleaseY]
+# Y (run) is ALWAYS held. ReleaseY=1 releases it (for fireballs).
+DISCRETE_ACTIONS = [
+    [0, 0, 0, 0, 0, 0, 0],  # 0: NOOP (hold Y = run in place)
+    [1, 0, 0, 0, 0, 0, 0],  # 1: Right (run right)
+    [1, 0, 0, 0, 0, 1, 0],  # 2: Right + B (run jump right)
+    [1, 0, 0, 0, 1, 0, 0],  # 3: Right + A (run spin jump right)
+    [0, 1, 0, 0, 0, 0, 0],  # 4: Left (run left)
+    [0, 1, 0, 0, 0, 1, 0],  # 5: Left + B (run jump left)
+    [0, 1, 0, 0, 1, 0, 0],  # 6: Left + A (run spin jump left)
+    [0, 0, 0, 0, 0, 1, 0],  # 7: B (run jump in place)
+    [0, 0, 0, 0, 1, 0, 0],  # 8: A (run spin jump in place)
+    [0, 0, 0, 1, 0, 0, 0],  # 9: Down (duck / enter pipe)
+    [0, 0, 1, 0, 0, 0, 0],  # 10: Up (enter door / climb)
+    [0, 0, 0, 0, 0, 0, 1],  # 11: Release Y (throw fireball)
+]
+
+NO_OP_RESPONSE = {
+    "type": "action",
+    "action": [0, 0, 0, 0, 0, 0, 0],
+    "total_reward": 0.0,
+    "reward_event": "",
+}
+
+
+class SMWEnvironment(gym.Env):
+    """Single SMW environment backed by a BizHawk emulator via sockets.
+
+    Communication flow:
+    - Before reset(): on_state_received() responds immediately with no-op
+      (emulators send states right after connecting, before training starts)
+    - After reset(): on_state_received() blocks until step()/reset() provides action
+
+    Thread safety: _lock protects all shared state transitions.
+    """
+
+    metadata = {"render_modes": ["human"]}
+
+    def __init__(self, emulator_id: int, config: dict):
+        super().__init__()
+        self.emulator_id = emulator_id
+        self.config = config
+
+        obs_size = get_observation_size(config)
+        self.observation_space = spaces.Box(
+            low=-0.5, high=1.5, shape=(obs_size,), dtype=np.float32
+        )
+        self.action_space = spaces.Discrete(len(DISCRETE_ACTIONS))
+
+        self.tracker = EpisodeTracker()
+        self._last_obs = np.zeros(obs_size, dtype=np.float32)
+        self._done = False
+
+        # Synchronization between socket thread and RL thread
+        self._lock = threading.Lock()
+        self._state_ready = threading.Event()
+        self._action_ready = threading.Event()
+        self._pending_state = None
+        self._pending_response = None
+
+        # Before first reset(), we just respond immediately to incoming states
+        self._initialized = False
+        self._buffered_state = None
+
+    def on_state_received(self, state: dict) -> dict:
+        """Called by socket server when a state message arrives.
+
+        Before first reset(): responds immediately with no-op.
+        After reset(): blocks until step()/reset() provides an action.
+        """
+        # Before training starts, don't block - just buffer and respond
+        if not self._initialized:
+            with self._lock:
+                self._buffered_state = state
+            return NO_OP_RESPONSE.copy()
+
+        # Normal flow: store state, signal ready, wait for action
+        with self._lock:
+            self._pending_state = state
+            self._state_ready.set()
+
+        if not self._action_ready.wait(timeout=30.0):
+            logger.warning(f"[Env {self.emulator_id}] Action timeout")
+            return NO_OP_RESPONSE.copy()
+
+        with self._lock:
+            self._action_ready.clear()
+            response = self._pending_response or NO_OP_RESPONSE.copy()
+            return response
+
+    def step(self, action):
+        """Standard gym step. Sends action, waits for next state."""
+        # Convert discrete action index to button list
+        action_idx = int(action)
+        action_list = DISCRETE_ACTIONS[action_idx]
+
+        # Respond to the PREVIOUS state with this action
+        # Use the last event from previous step (events are calculated after state is received)
+        with self._lock:
+            self._pending_response = {
+                "type": "action",
+                "action": action_list,
+                "total_reward": self.tracker.total_reward,
+                "reward_event": self.tracker.last_event,
+            }
+            self._action_ready.set()
+
+        # Wait for the NEXT state from emulator
+        if not self._state_ready.wait(timeout=30.0):
+            logger.warning(f"[Env {self.emulator_id}] State timeout in step()")
+            return self._last_obs, 0.0, True, False, {}
+
+        with self._lock:
+            self._state_ready.clear()
+            state = self._pending_state
+
+        if state is None:
+            return self._last_obs, 0.0, True, False, {}
+
+        # Compute observation and reward
+        obs = build_observation(state, self.config)
+        reward, event_str, done = compute_reward(state, self.tracker, self.config)
+        truncated = done and self.tracker.truncated
+        terminated = done and not truncated
+
+        self._last_obs = obs
+        self._done = done
+
+        info = {
+            "total_reward": self.tracker.total_reward,
+            "mario_x": state.get("mario_x_level", 0),
+            "goal_reached": self.tracker.goal_reached,
+        }
+        if truncated:
+            info["TimeLimit.truncated"] = True
+        if event_str:
+            info["reward_event"] = event_str
+        
+        # Add episode info when done (for SB3 callback)
+        if done:
+            info["episode"] = {
+                "r": self.tracker.total_reward,
+                "l": state.get("step", 0),
+                "max_x": self.tracker.max_x,
+                "goal_reached": self.tracker.goal_reached,
+                "truncated": truncated,
+            }
+
+        return obs, reward, terminated, truncated, info
+
+    def reset(self, *, seed=None, options=None):
+        """Reset the episode. Sends reset command to emulator."""
+        super().reset(seed=seed)
+        self.tracker = EpisodeTracker()
+        self._done = False
+
+        if not self._initialized:
+            # First reset: mark as initialized and use buffered state if available
+            self._initialized = True
+            logger.info(f"[Env {self.emulator_id}] Initialized")
+
+            # Send reset command - the next on_state_received will block properly
+            with self._lock:
+                self._pending_response = {"type": "reset"}
+                self._state_ready.clear()
+
+            # If we have a buffered state from before init, we need to
+            # tell Lua to reset. The next on_state_received call will block.
+            # We need to wait for it.
+            if not self._state_ready.wait(timeout=30.0):
+                logger.warning(f"[Env {self.emulator_id}] State timeout in first reset()")
+                return self._last_obs, {}
+
+            with self._lock:
+                self._state_ready.clear()
+                state = self._pending_state
+
+            if state:
+                obs = build_observation(state, self.config)
+                # Initialize tracker with state values to prevent false rewards
+                init_tracker_from_state(self.tracker, state)
+                self._last_obs = obs
+
+            # Respond with no-op to keep Lua going
+            with self._lock:
+                self._pending_response = NO_OP_RESPONSE.copy()
+                self._action_ready.set()
+
+            return self._last_obs, {}
+
+        # Subsequent resets: send reset command, wait for fresh state
+        with self._lock:
+            self._pending_response = {"type": "reset"}
+            self._action_ready.set()
+            self._state_ready.clear()
+
+        if not self._state_ready.wait(timeout=30.0):
+            logger.warning(f"[Env {self.emulator_id}] State timeout in reset()")
+            with self._lock:
+                self._pending_response = NO_OP_RESPONSE.copy()
+                self._action_ready.set()
+            return self._last_obs, {}
+
+        with self._lock:
+            self._state_ready.clear()
+            state = self._pending_state
+
+        if state:
+            obs = build_observation(state, self.config)
+            # Initialize tracker with state values to prevent false rewards
+            init_tracker_from_state(self.tracker, state)
+            self._last_obs = obs
+
+        # Respond with no-op to start the episode
+        with self._lock:
+            self._pending_response = NO_OP_RESPONSE.copy()
+            self._action_ready.set()
+
+        return self._last_obs, {}

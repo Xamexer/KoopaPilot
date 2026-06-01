@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "koopapilot"
+version = "0.1.0"
+description = "PPO training environment for Super Mario World through BizHawk"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "stable-baselines3>=2.1.0",
+    "gymnasium>=0.29.0",
+    "numpy>=1.24.0",
+    "torch>=2.0.0",
+    "flask>=3.0.0",
+    "pywin32>=306; platform_system == 'Windows'",
+    "opencv-python>=4.8.0",
+    "tensorboard>=2.14.0",
+    "tqdm>=4.65.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+koopapilot = "server.main:main"
+
+[tool.setuptools.packages.find]
+include = ["server*"]
+
+[tool.setuptools.package-data]
+"server.dashboard" = ["templates/*.html", "static/*.js"]
