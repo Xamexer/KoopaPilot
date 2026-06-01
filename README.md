@@ -39,20 +39,13 @@ This repository is the result. It connects one or more BizHawk emulator instance
 ## Architecture
 
 ```text
-Python PPO training server
-    |
-    +-- Gymnasium environment and vectorized wrapper
-    +-- observation builder and reward calculator
-    +-- metrics logger and Flask dashboard
-    |
-    +-- TCP sockets, one port per emulator
-            |
-            +-- BizHawk + lua/smw_agent.lua
-                    |
-                    +-- WRAM reads
-                    +-- controller input
-                    +-- savestate resets
-                    +-- overlays and screenshots
++-----------------------------+        TCP sockets        +-----------------------------+
+| Python PPO training server  | <-----------------------> | BizHawk emulator + Lua      |
+|                             |                           | smw_agent.lua               |
+| - Gymnasium env / vectors   |                           | - WRAM reads                |
+| - observations + rewards    |                           | - controller input          |
+| - metrics + Flask dashboard |                           | - savestate resets          |
++-----------------------------+                           +-----------------------------+
 ```
 
 ## Requirements
@@ -70,7 +63,7 @@ BizHawk binaries and ROM files are intentionally not included in this repository
 1. Clone the repository and enter the project directory.
 
    ```powershell
-   git clone <your-repository-url>
+   git clone https://github.com/Xamexer/KoopaPilot.git
    cd KoopaPilot
    ```
 
@@ -326,7 +319,6 @@ Training runs write JSON metrics below `./logs/`. The Flask dashboard can:
 The WRAM addresses used by this project were researched with the SMWCentral documentation:
 
 - [SMWCentral SMW RAM Memory Map](https://www.smwcentral.net/?p=memorymap&game=smw&region=ram)
-- [SMWCentral legacy RAM Map reference](https://media.smwcentral.net/Iceguy/ram.htm)
 
 Useful related references:
 
@@ -352,7 +344,7 @@ Full end-to-end training and evaluation checks require a local BizHawk installat
 
 ## Legal Notice
 
-This is an independent research and hobby project. It is not affiliated with or endorsed by Nintendo. No ROM, commercial game data, BizHawk binaries, savestates, trained checkpoints, or recorded videos are distributed through this repository.
+This is an independent research and hobby project. It is not affiliated with or endorsed by Nintendo. No ROM, commercial game data, BizHawk binaries, savestates, or trained checkpoints are distributed through this repository.
 
 ## License
 
