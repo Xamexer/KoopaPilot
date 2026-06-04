@@ -24,11 +24,29 @@ class EpisodeTracker:
     last_event: str = ""  # Store last reward event for display
     goal_reached: bool = False
     truncated: bool = False
+    visited_cells: set[tuple[int, int, int]] = field(default_factory=set)
 
 
-def init_tracker_from_state(tracker: EpisodeTracker, state: dict):
+def _position_cell(state: dict, rewards_cfg: dict) -> tuple[int, int, int]:
+    """Return a coarse per-sublevel position for episode-local exploration."""
+    cell_size = max(1, int(rewards_cfg.get("exploration_cell_size_pixels", 16)))
+    return (
+        state.get("sublevel", 0),
+        int(state.get("mario_x_level", 0) // cell_size),
+        int(state.get("mario_y_level", 0) // cell_size),
+    )
+
+
+def _remember_position_cell(tracker: EpisodeTracker, state: dict,
+                            rewards_cfg: dict):
+    tracker.visited_cells.add(_position_cell(state, rewards_cfg))
+
+
+def init_tracker_from_state(tracker: EpisodeTracker, state: dict,
+                            config: dict | None = None):
     """Initialize tracker with current state values (for reset/teleport).
     This prevents false rewards when loading a savestate mid-level."""
+    rewards_cfg = (config or {}).get("rewards", {})
     tracker.last_x = state.get("mario_x_level", 0)
     tracker.last_y = state.get("mario_y_level", 0)
     tracker.max_x = tracker.last_x
@@ -40,6 +58,7 @@ def init_tracker_from_state(tracker: EpisodeTracker, state: dict):
     tracker.last_event = "TELEPORT/RESET"
     tracker.is_first_step = False  # Mark as initialized
     tracker.steps_without_progress = 0
+    _remember_position_cell(tracker, state, rewards_cfg)
     
     # Read initial sprite status
     sprites = state.get("sprites", [])
@@ -82,6 +101,7 @@ def compute_reward(state: dict, tracker: EpisodeTracker,
         tracker.last_lives = lives
         tracker.last_sublevel = sublevel
         tracker.is_first_step = False
+        _remember_position_cell(tracker, state, rewards_cfg)
 
         # Read initial sprite status
         sprites = state.get("sprites", [])
@@ -120,7 +140,8 @@ def compute_reward(state: dict, tracker: EpisodeTracker,
     teleported = x_diff > threshold
 
     # Sublevel change
-    if sublevel != tracker.last_sublevel:
+    sublevel_changed = sublevel != tracker.last_sublevel
+    if sublevel_changed:
         pipe_reward = rewards_cfg.get("pipe_door_entered", 100.0)
         reward += pipe_reward
         events.append(f"PIPE/DOOR +{pipe_reward:.0f}")
@@ -129,6 +150,7 @@ def compute_reward(state: dict, tracker: EpisodeTracker,
         tracker.max_y = mario_y
         tracker.last_sublevel = sublevel
         tracker.steps_without_progress = 0
+        _remember_position_cell(tracker, state, rewards_cfg)
     elif teleported:
         # Large X jump without sublevel change (e.g., savestate load mid-level)
         # Treat this as a new starting position - no reward for the jump
@@ -137,13 +159,14 @@ def compute_reward(state: dict, tracker: EpisodeTracker,
         tracker.max_x = mario_x
         tracker.max_y = mario_y
         tracker.steps_without_progress = 0
+        _remember_position_cell(tracker, state, rewards_cfg)
         events.append(f"TELEPORT {x_diff:.0f}px")
 
     # --- X PROGRESS (only for new max X) ---
     # Rewarding raw delta-X can be exploited by moving back and forth because
     # PPO discounts the later negative leg of the cycle. A monotonic record
     # keeps the dense progress signal without making oscillation profitable.
-    made_progress = False
+    made_progress = sublevel_changed
     if not teleported:
         if mario_x > tracker.max_x:
             max_delta = mario_x - tracker.max_x
@@ -164,6 +187,19 @@ def compute_reward(state: dict, tracker: EpisodeTracker,
             tracker.max_y = mario_y
             made_progress = True
             events.append(f"NEW_Y +{y_reward:.1f}")
+
+    # --- EPISODE-LOCAL EXPLORATION ---
+    # Reward each coarse position only once per episode. This gives PPO a
+    # learnable trail through detours without making back-and-forth movement
+    # profitable.
+    exploration_reward = rewards_cfg.get("exploration_new_cell", 0.0)
+    if exploration_reward > 0 and not teleported:
+        position_cell = _position_cell(state, rewards_cfg)
+        if position_cell not in tracker.visited_cells:
+            tracker.visited_cells.add(position_cell)
+            reward += exploration_reward
+            made_progress = True
+            events.append(f"EXPLORE +{exploration_reward:.1f}")
 
     # --- STAGNATION TRACKING ---
     if not teleported:

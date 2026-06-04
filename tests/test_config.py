@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from server.config import _validate, get_savestate_files, load_config
+from server.config import _validate, get_level_ids, get_savestate_files, load_config
 
 
 def minimal_config() -> dict:
@@ -84,6 +84,30 @@ class ConfigTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "divisible"):
             _validate(config)
+
+    def test_lunar_magic_level_ids_are_parsed_as_hex_strings(self):
+        config = {"level_loading": {"levels": ["0x105", "106"]}}
+
+        self.assertEqual(get_level_ids(config), [0x105, 0x106])
+
+    def test_full_level_loading_rejects_decimal_lunar_magic_ids(self):
+        config = minimal_config()
+        config["level_loading"] = {
+            "mode": "level_loading",
+            "levels": [105, 106],
+        }
+
+        with self.assertRaisesRegex(ValueError, 'quote them, for example "0x105"'):
+            _validate(config)
+
+    def test_full_level_loading_accepts_overworld_entry_levels(self):
+        config = minimal_config()
+        config["level_loading"] = {
+            "mode": "level_loading",
+            "levels": ["0x105", "0x106"],
+        }
+
+        _validate(config)
 
 
 if __name__ == "__main__":

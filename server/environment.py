@@ -30,7 +30,7 @@ DISCRETE_ACTIONS = [
 
 NO_OP_RESPONSE = {
     "type": "action",
-    "action": [0, 0, 0, 0, 0, 0, 0],
+    "action": [0, 0, 0, 0, 0, 0, 1],
     "total_reward": 0.0,
     "reward_event": "",
 }
@@ -71,20 +71,18 @@ class SMWEnvironment(gym.Env):
         self._pending_state = None
         self._pending_response = None
 
-        # Before first reset(), we just respond immediately to incoming states
+        # Before first reset(), respond immediately so emulator startup cannot
+        # block while the remaining instances and the agent are initialized.
         self._initialized = False
-        self._buffered_state = None
 
     def on_state_received(self, state: dict) -> dict:
         """Called by socket server when a state message arrives.
 
-        Before first reset(): responds immediately with no-op.
+        Before first reset(): responds immediately with all buttons released.
         After reset(): blocks until step()/reset() provides an action.
         """
-        # Before training starts, don't block - just buffer and respond
+        # Before training starts, don't block or send an input-bearing action.
         if not self._initialized:
-            with self._lock:
-                self._buffered_state = state
             return NO_OP_RESPONSE.copy()
 
         # Normal flow: store state, signal ready, wait for action
@@ -168,60 +166,62 @@ class SMWEnvironment(gym.Env):
         self._done = False
 
         if not self._initialized:
-            # First reset: mark as initialized and use buffered state if available
-            self._initialized = True
+            # First reset: take control of the next emulator state, explicitly
+            # send a reset, then wait for the freshly loaded state. Previously
+            # the reset response was prepared but never released to Lua.
+            with self._lock:
+                self._state_ready.clear()
+                self._initialized = True
             logger.info(f"[Env {self.emulator_id}] Initialized")
 
-            # Send reset command - the next on_state_received will block properly
+            if not self._state_ready.wait(timeout=30.0):
+                logger.warning(
+                    f"[Env {self.emulator_id}] State timeout before first reset()"
+                )
+                return self._last_obs, {}
+
+            # Release the waiting state with a reset command. Lua performs the
+            # configured savestate or full-level load before sending again.
+            with self._lock:
+                self._state_ready.clear()
+                self._pending_response = {"type": "reset"}
+                self._action_ready.set()
+
+            if not self._state_ready.wait(timeout=30.0):
+                logger.warning(
+                    f"[Env {self.emulator_id}] State timeout after first reset()"
+                )
+                with self._lock:
+                    self._pending_response = NO_OP_RESPONSE.copy()
+                    self._action_ready.set()
+                return self._last_obs, {}
+
+            with self._lock:
+                self._state_ready.clear()
+                state = self._pending_state
+        else:
+            # Subsequent resets: release the current waiting state with a reset
+            # command, then wait for the freshly loaded state.
             with self._lock:
                 self._pending_response = {"type": "reset"}
+                self._action_ready.set()
                 self._state_ready.clear()
 
-            # If we have a buffered state from before init, we need to
-            # tell Lua to reset. The next on_state_received call will block.
-            # We need to wait for it.
             if not self._state_ready.wait(timeout=30.0):
-                logger.warning(f"[Env {self.emulator_id}] State timeout in first reset()")
+                logger.warning(f"[Env {self.emulator_id}] State timeout in reset()")
+                with self._lock:
+                    self._pending_response = NO_OP_RESPONSE.copy()
+                    self._action_ready.set()
                 return self._last_obs, {}
 
             with self._lock:
                 self._state_ready.clear()
                 state = self._pending_state
 
-            if state:
-                obs = build_observation(state, self.config)
-                # Initialize tracker with state values to prevent false rewards
-                init_tracker_from_state(self.tracker, state)
-                self._last_obs = obs
-
-            # Respond with no-op to keep Lua going
-            with self._lock:
-                self._pending_response = NO_OP_RESPONSE.copy()
-                self._action_ready.set()
-
-            return self._last_obs, {}
-
-        # Subsequent resets: send reset command, wait for fresh state
-        with self._lock:
-            self._pending_response = {"type": "reset"}
-            self._action_ready.set()
-            self._state_ready.clear()
-
-        if not self._state_ready.wait(timeout=30.0):
-            logger.warning(f"[Env {self.emulator_id}] State timeout in reset()")
-            with self._lock:
-                self._pending_response = NO_OP_RESPONSE.copy()
-                self._action_ready.set()
-            return self._last_obs, {}
-
-        with self._lock:
-            self._state_ready.clear()
-            state = self._pending_state
-
         if state:
             obs = build_observation(state, self.config)
             # Initialize tracker with state values to prevent false rewards
-            init_tracker_from_state(self.tracker, state)
+            init_tracker_from_state(self.tracker, state, self.config)
             self._last_obs = obs
 
         # Respond with no-op to start the episode

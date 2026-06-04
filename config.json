@@ -22,15 +22,15 @@
   },
 
   "flags": {
-    "visibility": true,
-    "reward_display": true,
-    "button_input_display": true
+    "visibility": false,
+    "reward_display": false,
+    "button_input_display": false
   },
 
   "level_loading": {
-    "_comment": "Using savestates - use flat/easy levels for early training, avoid athletic/precision levels",
-    "mode": "savestate",
-    "levels": [],
+    "_comment": "Full level loads use quoted hexadecimal Lunar Magic IDs",
+    "mode": "level_loading",
+    "levels": ["0x103"],
     "savestate_files": []
   },
 
@@ -120,14 +120,16 @@
     "y_progress_per_pixel": 0.3,
     "goal_reached": 1000.0,
     "coin_collected": 0.0,
-    "powerup_upgrade": 5.0,
+    "powerup_upgrade": 20.0,
     "oneup_collected": 0.0,
     "pipe_door_entered": 50.0,
-    "enemy_killed": 0.0,
-    "enemy_stunned": 0.0,
+    "enemy_killed": 10.0,
+    "enemy_stunned": 10.0,
     "death_penalty": -30.0,
     "powerup_downgrade": -10.0,
-    "time_penalty_per_step": -0.01,
+    "time_penalty_per_step": -0.05,
+    "exploration_new_cell": 0.25,
+    "exploration_cell_size_pixels": 16,
     "teleport_threshold_pixels": 256
   },
 
@@ -152,7 +154,7 @@
         "vf": [512, 256]
       }
     },
-    "total_timesteps": 2500000,
+    "total_timesteps": 25000000,
     "save_interval_steps": 100000,
     "max_episode_steps": 1024,
     "stagnation_timeout_steps": 300

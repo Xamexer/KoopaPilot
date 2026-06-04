@@ -70,6 +70,26 @@ def _validate(config: dict):
     if norm.get("max_sprite_hitbox_dimension", 128) <= 0:
         raise ValueError("max_sprite_hitbox_dimension must be > 0")
 
+    level_loading = config.get("level_loading", {})
+    level_load_mode = level_loading.get("mode", "savestate")
+    if level_load_mode not in {"savestate", "level_loading"}:
+        raise ValueError("level_loading.mode must be 'savestate' or 'level_loading'")
+    if level_load_mode == "level_loading":
+        levels = get_level_ids(config)
+        if not levels:
+            raise ValueError("level_loading.levels must not be empty in level_loading mode")
+        invalid_levels = [
+            level_id for level_id in levels
+            if not (0x001 <= level_id <= 0x024 or 0x101 <= level_id <= 0x1DB)
+        ]
+        if invalid_levels:
+            formatted = ", ".join(f"0x{level_id:03X}" for level_id in invalid_levels)
+            raise ValueError(
+                "level_loading.levels contains IDs that cannot be entered through "
+                f"SMW's full overworld loader: {formatted}. Lunar Magic level IDs "
+                "are hexadecimal; quote them, for example \"0x105\"."
+            )
+
 
 def get_savestate_files(config: dict) -> list:
     """Get list of savestate file paths.

@@ -107,6 +107,23 @@ Savestates make episode resets reliable and allow training on selected levels.
 
 When `level_loading.savestate_files` is empty, the server automatically scans the top level of `./savestates/`.
 
+For full ROM-backed resets instead of savestates, use quoted hexadecimal
+Lunar Magic level IDs:
+
+```json
+"level_loading": {
+  "mode": "level_loading",
+  "levels": ["0x105", "0x106"],
+  "savestate_files": []
+}
+```
+
+This starts SMW's real overworld-to-level game-mode sequence, so level
+headers, Map16, graphics, music, and sprites are loaded again after every
+episode reset or registered death. Select only first rooms that can be
+entered from the overworld (`0x001`-`0x024` or `0x101`-`0x1DB`), not
+sublevels that are reachable only through doors or pipes.
+
 ## Commands
 
 Start a fresh training run:
@@ -244,21 +261,27 @@ The reward calculator favors new level progress and successful exits while disco
 | ---------------------------------------- | ----------------: |
 | New horizontal progress                  |  `+0.3` per pixel |
 | New vertical progress in vertical levels |  `+0.3` per pixel |
+| Newly explored tile cell                 |         `+0.25` |
 | Goal reached                             |           `+1000` |
 | Coin collected                           |              `+0` |
-| Powerup upgrade                          |              `+5` |
+| Powerup upgrade                          |             `+20` |
 | 1-UP collected                           |              `+0` |
 | Pipe or door transition                  |             `+50` |
-| Enemy defeated                           |              `+0` |
-| Enemy stunned                            |              `+0` |
+| Enemy defeated                           |             `+10` |
+| Enemy stunned                            |             `+10` |
 | Death                                    |             `-30` |
 | Powerup loss                             |             `-10` |
-| Time penalty                             |  `-0.01` per step |
+| Time penalty                             |  `-0.05` per step |
 
 Horizontal reward is granted only for new per-episode maximum X positions.
 Returning to previously visited ground therefore cannot farm reward. Large
 coordinate jumps are treated as teleports to prevent savestate loads and
 transitions from creating false progress rewards.
+
+Each coarse tile cell also grants a small episode-local exploration reward
+the first time Mario visits it. This makes necessary detours and climbs
+learnable without allowing repeated movement between known cells to farm
+reward. Newly explored cells reset the stagnation timeout as well.
 
 ## Training Profile
 

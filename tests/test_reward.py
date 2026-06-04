@@ -78,6 +78,46 @@ class RewardTests(unittest.TestCase):
         )
         self.assertEqual(reward, 0.0)
 
+    def test_exploration_reward_is_granted_once_per_cell(self):
+        tracker = EpisodeTracker(
+            is_first_step=False,
+            max_x=100,
+            last_x=100,
+            visited_cells={(0, 6, 0)},
+        )
+        reward_config = config()
+        reward_config["rewards"]["exploration_new_cell"] = 0.5
+
+        reward, event, _ = compute_reward(
+            state(mario_x_level=90), tracker, reward_config
+        )
+        self.assertEqual(reward, 0.5)
+        self.assertIn("EXPLORE", event)
+
+        reward, event, _ = compute_reward(
+            state(mario_x_level=90), tracker, reward_config
+        )
+        self.assertEqual(reward, 0.0)
+        self.assertNotIn("EXPLORE", event)
+
+    def test_exploration_in_horizontal_level_resets_stagnation(self):
+        tracker = EpisodeTracker(
+            is_first_step=False,
+            steps_without_progress=2,
+            visited_cells={(0, 0, 0)},
+        )
+        reward_config = config()
+        reward_config["rewards"]["exploration_new_cell"] = 0.5
+        reward_config["ppo"]["stagnation_timeout_steps"] = 3
+
+        _, event, done = compute_reward(
+            state(mario_y_level=16), tracker, reward_config
+        )
+
+        self.assertNotIn("TIMEOUT", event)
+        self.assertFalse(done)
+        self.assertEqual(tracker.steps_without_progress, 0)
+
     def test_stagnation_timeout_is_marked_as_truncation(self):
         tracker = EpisodeTracker(is_first_step=False, steps_without_progress=2)
         reward_config = config()

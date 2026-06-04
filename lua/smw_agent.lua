@@ -618,84 +618,22 @@ end
 -- Level loading
 -- ============================================================================
 
--- Translevel lookup: maps Lunar Magic level number to translevel number
--- Hardcoded fallback for common levels
-local translevel_lookup = nil
-local HARDCODED_TRANSLEVELS = {
-    -- Yoshi's Island
-    [0x103] = 0x07,  -- Yoshi's Island 3
-    [0x104] = 0x08,  -- Yoshi's Island 4
-    [0x105] = 0x09,  -- Yoshi's Island 1
-    [0x106] = 0x0A,  -- Yoshi's Island 2
-    [0x107] = 0x0B,  -- Iggy's Castle
-    -- Donut Plains
-    [0x10B] = 0x0C,  -- Donut Plains 1
-    [0x10C] = 0x0D,  -- Donut Plains 2
-    [0x10D] = 0x0E,  -- Donut Plains 3
-    [0x10E] = 0x0F,  -- Donut Plains 4
-    [0x10F] = 0x10,  -- Morton's Castle
-    -- Vanilla Dome
-    [0x115] = 0x16,  -- Vanilla Dome 1
-    [0x116] = 0x17,  -- Vanilla Dome 2
-    [0x11A] = 0x1B,  -- Vanilla Dome 4
-    [0x11D] = 0x1E,  -- Lemmy's Castle
-    -- Forest of Illusion
-    [0x121] = 0x22,  -- Forest of Illusion 1
-    [0x123] = 0x24,  -- Ludwig's Castle
-}
+local GAME_MODE_OVERWORLD = 0x0E
+local GAME_MODE_FADE_TO_LEVEL = 0x0F
+local GAME_MODE_LOAD_LEVEL = 0x11
+local GAME_MODE_FADE_IN_LEVEL = 0x13
+local GAME_MODE_LEVEL = 0x14
 
---- Read SMW's translevel table from ROM and build a reverse lookup.
-local function build_translevel_lookup()
-    local rom_offset = 0x2EC00
-    local domain = nil
-
-    -- Try various domain names for ROM access
-    for _, name in ipairs({"CARTROM", "ROM", "CARTRIDGE ROM", "Cart ROM"}) do
-        local ok = pcall(function() memory.read_u8(0, name) end)
-        if ok then
-            domain = name
-            break
-        end
+--- Convert a Lunar Magic first-room ID into SMW's translevel identifier.
+--- Only levels that can be entered as top-level overworld levels are valid.
+local function level_id_to_translevel(level_id)
+    if level_id >= 0x001 and level_id <= 0x024 then
+        return level_id, 0
     end
-
-    -- Start with hardcoded values
-    local lookup = {}
-    for lvl, tl in pairs(HARDCODED_TRANSLEVELS) do
-        lookup[lvl] = tl
+    if level_id >= 0x101 and level_id <= 0x1DB then
+        return level_id - 0x0DC, 1
     end
-
-    if not domain then
-        console.log("WARNING: Cannot access ROM domain, using hardcoded translevels")
-        return lookup
-    end
-
-    console.log("Reading translevel table from ROM (domain: " .. domain .. ")")
-    
-    -- Read ROM table and merge with hardcoded (ROM takes precedence if different)
-    for i = 0, 0x7F do
-        local ok, lo, hi = pcall(function()
-            return memory.read_u8(rom_offset + i * 2, domain),
-                   memory.read_u8(rom_offset + i * 2 + 1, domain)
-        end)
-        if ok then
-            local level_num = lo | ((hi & 0x01) << 8)
-            if level_num > 0 then
-                lookup[level_num] = i
-            end
-        end
-    end
-
-    -- Log discovered levels for warp configuration checks.
-    console.log("Available translevels:")
-    for _, lv in ipairs({0x105, 0x106, 0x103, 0x104, 0x107, 0x10B, 0x115, 0x123}) do
-        local tl = lookup[lv]
-        if tl then
-            console.log("  Level " .. string.format("0x%03X", lv)
-                .. " -> translevel " .. string.format("0x%02X", tl))
-        end
-    end
-
-    return lookup
+    return nil, nil
 end
 
 --- Skip SMW's boot/intro/title/file-select to reach overworld or gameplay.
@@ -709,7 +647,7 @@ local function skip_intro()
         local gm = mainmemory.read_u8(0x0100)
 
         -- Overworld or in-level = ready for warping
-        if gm == 0x0E or gm == 0x14 then
+        if gm == GAME_MODE_OVERWORLD or gm == GAME_MODE_LEVEL then
             console.log(string.format("[Emu #%d] Game ready (mode 0x%02X)", CONFIG.emulator_id, gm))
             return true
         end
@@ -738,117 +676,90 @@ local function load_random_savestate()
 end
 
 local function warp_to_level(level_id)
-    -- Ensure we are in a stable game state
+    local translevel, target_submap = level_id_to_translevel(level_id)
+    if not translevel then
+        console.log(string.format(
+            "[Emu #%d] ERROR: Level 0x%03X cannot be entered through SMW's full overworld loader",
+            CONFIG.emulator_id, level_id
+        ))
+        return false
+    end
+
+    -- Ensure we are in a stable overworld or gameplay state.
     local gm = mainmemory.read_u8(0x0100)
     console.log(string.format("[Emu #%d]   Current game mode: 0x%02X", CONFIG.emulator_id, gm))
 
-    if gm ~= 0x0E and gm ~= 0x14 then
+    if gm ~= GAME_MODE_OVERWORLD and gm ~= GAME_MODE_LEVEL then
         if not skip_intro() then
             console.log(string.format("[Emu #%d] ERROR: Cannot warp - game not ready", CONFIG.emulator_id))
-            return
+            return false
         end
         gm = mainmemory.read_u8(0x0100)
     end
 
-    -- Resolve the translevel number from the ROM lookup table
-    local translevel
-    if translevel_lookup then
-        translevel = translevel_lookup[level_id]
-        if translevel then
-            console.log(string.format("[Emu #%d]   Using translevel 0x%02X for level 0x%03X", CONFIG.emulator_id, translevel, level_id))
-        else
-            console.log(string.format("[Emu #%d]   WARNING: No translevel for level 0x%03X - using raw low byte", CONFIG.emulator_id, level_id))
-            translevel = level_id & 0xFF
-        end
-    else
-        translevel = level_id & 0xFF
-        console.log(string.format("[Emu #%d]   No ROM lookup - using translevel 0x%02X", CONFIG.emulator_id, translevel))
-    end
+    console.log(string.format(
+        "[Emu #%d]   Full-loading level 0x%03X via translevel 0x%02X",
+        CONFIG.emulator_id, level_id, translevel
+    ))
 
-    -- If we're in a level (0x14), go back to overworld first
-    if gm == 0x14 then
-        console.log(string.format("[Emu #%d]   Exiting current level to overworld...", CONFIG.emulator_id))
-        -- Press Start+Select to exit level
-        for i = 1, 10 do
-            joypad.set({Start = true, Select = true}, 1)
-            emu.frameadvance()
-        end
-        joypad.set({}, 1)
-        -- Wait for overworld
-        for i = 1, 120 do
-            emu.frameadvance()
-            if mainmemory.read_u8(0x0100) == 0x0E then
-                console.log(string.format("[Emu #%d]   Back to overworld", CONFIG.emulator_id))
-                break
-            end
-        end
-    end
+    -- Cancel death/end-level state before starting the same transition used by
+    -- an overworld level entry. Game mode 0x11 then reloads headers, Map16,
+    -- sprites, graphics, music, and Mario's entrance from ROM.
+    mainmemory.write_u8(0x0071, 0x00)            -- player animation = normal
+    mainmemory.write_u8(0x141A, 0x00)            -- first room, not a door/pipe sublevel
+    mainmemory.write_u8(0x1493, 0x00)            -- clear end-level timer
+    mainmemory.write_u8(0x13C6, 0x00)            -- clear cutscene ID
+    mainmemory.write_u8(0x13CE, 0x00)            -- clear midway flag
+    mainmemory.write_u8(0x13D2, 0x00)            -- clear boss/victory movement state
 
-    -- Set up level load via the "prepare level" subroutine
-    -- This mimics what happens when you press A on a level dot
-    mainmemory.write_u8(0x13BF, translevel)      -- destination translevel
-    mainmemory.write_u8(0x0089, 0x00)            -- normal entrance
-    mainmemory.write_u8(0x141A, 0x00)            -- reset sublevel count
-    mainmemory.write_u8(0x0071, 0x00)            -- player anim = normal
-    mainmemory.write_u8(0x13CE, 0x00)            -- no special flags
-    mainmemory.write_u8(0x0D9B, 0x00)            -- main overworld
-    
-    -- Set game mode to "fade out to level" (0x0B)
-    -- This is the state that triggers level loading
-    mainmemory.write_u8(0x0100, 0x0B)
-    
-    -- SMW needs a few frames to process the mode change
-    -- Wait through the fade sequence: 0x0B -> 0x0C -> 0x0D -> 0x14
-    local wait_frames = 400
-    for i = 1, wait_frames do
-        emu.frameadvance()
-        local new_gm = mainmemory.read_u8(0x0100)
-        
-        if new_gm == 0x14 then
-            console.log(string.format("[Emu #%d]   Level loaded OK (took %d frames)", CONFIG.emulator_id, i))
-            mainmemory.write_u8(0x0071, 0x00)
-            return true
-        end
-        
-        -- Detect failure early
-        if new_gm == 0x0E then
-            -- Back to overworld - loading was cancelled
-            console.log(string.format("[Emu #%d]   Load cancelled, back to overworld", CONFIG.emulator_id))
-            break
-        end
-        
-        if new_gm <= 0x07 then
-            console.log(string.format("[Emu #%d]   Warp failed (game mode 0x%02X)", CONFIG.emulator_id, new_gm))
-            break
-        end
-    end
-    
-    -- Retry: try a different approach
-    console.log(string.format("[Emu #%d]   Retrying with alternative method...", CONFIG.emulator_id))
-    skip_intro()
-    
-    -- Alternative: Set up a "fake" level entry
-    -- First, set Mario's position on overworld to a specific node
+    -- $13BF identifies the translevel. $0109 is the essential forced-load
+    -- override; without it the loader chooses a room from Mario's OW position.
     mainmemory.write_u8(0x13BF, translevel)
-    mainmemory.write_u8(0x0089, 0x00)
-    mainmemory.write_u8(0x141A, 0x00)
-    mainmemory.write_u8(0x0071, 0x00)
-    mainmemory.write_u8(0x13CE, 0x00)
-    mainmemory.write_u8(0x0100, 0x0B)
-    
+    mainmemory.write_u8(0x1F11, target_submap)
+    mainmemory.write_u8(0x0109, translevel)
+
+    -- Initialize the normal fade-out and enter the complete level-load chain:
+    -- 0x0F -> 0x10 -> 0x11 -> 0x12 -> 0x13 -> 0x14.
+    mainmemory.write_u8(0x0DAE, 0x0F)            -- full brightness
+    mainmemory.write_u8(0x0DAF, 0x01)            -- fade/mosaic direction = out
+    mainmemory.write_u8(0x0DB0, 0x00)            -- mosaic size
+    mainmemory.write_u8(0x0DB1, 0x02)            -- same initial delay as OW entry
+    mainmemory.write_u8(0x0100, GAME_MODE_FADE_TO_LEVEL)
+
+    local wait_frames = 600
+    local saw_full_load = false
     for i = 1, wait_frames do
         emu.frameadvance()
         local new_gm = mainmemory.read_u8(0x0100)
-        if new_gm == 0x14 then
-            console.log(string.format("[Emu #%d]   Level loaded on retry (took %d frames)", CONFIG.emulator_id, i))
+
+        if new_gm >= GAME_MODE_LOAD_LEVEL and new_gm <= GAME_MODE_FADE_IN_LEVEL then
+            saw_full_load = true
+        end
+
+        if new_gm == GAME_MODE_LEVEL then
+            local loaded_level_low = mainmemory.read_u8(0x1924)
+            mainmemory.write_u8(0x0109, 0x00)
             mainmemory.write_u8(0x0071, 0x00)
+            if not saw_full_load then
+                console.log(string.format("[Emu #%d]   WARNING: Reached gameplay without observing full-load modes", CONFIG.emulator_id))
+            end
+            if loaded_level_low ~= (level_id & 0xFF) then
+                console.log(string.format(
+                    "[Emu #%d]   WARNING: Requested 0x%03X but loader reports low byte 0x%02X",
+                    CONFIG.emulator_id, level_id, loaded_level_low
+                ))
+            end
+            console.log(string.format("[Emu #%d]   Full level load complete (took %d frames)", CONFIG.emulator_id, i))
             return true
         end
-        if new_gm == 0x0E then
+
+        if new_gm == GAME_MODE_OVERWORLD or new_gm <= 0x07 then
+            console.log(string.format("[Emu #%d]   Full level load failed in game mode 0x%02X", CONFIG.emulator_id, new_gm))
             break
         end
     end
-    
+
+    mainmemory.write_u8(0x0109, 0x00)
     console.log(string.format("[Emu #%d]   WARNING: warp_to_level failed (mode 0x%02X)", CONFIG.emulator_id, mainmemory.read_u8(0x0100)))
     return false
 end
@@ -994,9 +905,6 @@ end
 -- ============================================================================
 local function main()
     detect_emulator_id()
-
-    -- Build translevel lookup from ROM (before connecting, so no frames wasted)
-    translevel_lookup = build_translevel_lookup()
 
     -- Disable sound and set speed for training
     client.SetSoundOn(false)
