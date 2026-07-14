@@ -27,11 +27,33 @@ def _resolve_paths(config: dict, base_dir: Path):
         if key in paths and not os.path.isabs(paths[key]):
             paths[key] = str((base_dir / paths[key]).resolve())
 
+    backend = config.get("backend", {})
+    if isinstance(backend, dict):
+        retrojet = backend.get("retrojet", {})
+        if isinstance(retrojet, dict):
+            for key in ["core_path", "rom_path"]:
+                if key in retrojet and not os.path.isabs(retrojet[key]):
+                    retrojet[key] = str((base_dir / retrojet[key]).resolve())
+            if "savestate_paths" in retrojet:
+                retrojet["savestate_paths"] = [
+                    str((base_dir / path).resolve())
+                    if not os.path.isabs(path)
+                    else path
+                    for path in retrojet["savestate_paths"]
+                ]
+
 
 def _validate(config: dict):
     """Basic validation of config values."""
     emu = config.get("emulator", {})
-    num_instances = emu.get("num_instances", 1)
+    backend = config.get("backend", {})
+    retrojet = backend.get("retrojet", {}) if isinstance(backend, dict) else {}
+    is_retrojet = isinstance(backend, dict) and backend.get("type") == "retrojet"
+    num_instances = (
+        retrojet.get("num_envs", emu.get("num_instances", 1))
+        if is_retrojet and isinstance(retrojet, dict)
+        else emu.get("num_instances", 1)
+    )
     base_port = emu.get("base_port", 9000)
     frame_skip = emu.get("frame_skip", 4)
     if num_instances < 1:
@@ -89,6 +111,16 @@ def _validate(config: dict):
                 f"SMW's full overworld loader: {formatted}. Lunar Magic level IDs "
                 "are hexadecimal; quote them, for example \"0x105\"."
             )
+
+    if isinstance(backend, dict):
+        backend_type = backend.get("type", "bizhawk")
+        if backend_type not in {"bizhawk", "retrojet"}:
+            raise ValueError("backend.type must be 'bizhawk' or 'retrojet'")
+        if backend_type == "retrojet" and isinstance(retrojet, dict):
+            if retrojet.get("num_envs", num_instances) < 1:
+                raise ValueError("backend.retrojet.num_envs must be >= 1")
+            if retrojet.get("frame_skip", frame_skip) < 1:
+                raise ValueError("backend.retrojet.frame_skip must be >= 1")
 
 
 def get_savestate_files(config: dict) -> list:

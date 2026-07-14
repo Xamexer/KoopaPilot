@@ -17,11 +17,25 @@ logger = logging.getLogger("koopapilot")
 def main():
     parser = argparse.ArgumentParser(description="KoopaPilot")
     parser.add_argument(
-        "--mode", choices=["training", "evaluation", "human", "dashboard"],
+        "--mode",
+        choices=[
+            "training",
+            "evaluation",
+            "human",
+            "dashboard",
+            "demo",
+            "live-demo",
+        ],
         default="training", help="Operation mode"
     )
     parser.add_argument("--config", default="config.json", help="Config file path")
     parser.add_argument("--model", default=None, help="Model path to load")
+    parser.add_argument(
+        "--backend",
+        choices=["bizhawk", "retrojet"],
+        default=None,
+        help="Training backend (default: config backend.type or bizhawk)",
+    )
     parser.add_argument(
         "--no-launch", action="store_true",
         help="Don't launch emulators (connect to already running ones)"
@@ -32,7 +46,15 @@ def main():
     )
     parser.add_argument(
         "--episodes", type=int, default=None,
-        help="Number of evaluation episodes (default: 1 per savestate)"
+        help="Number of evaluation or demo episodes"
+    )
+    parser.add_argument(
+        "--demo-emulators", type=int, default=1,
+        help="Number of visible BizHawk instances for demo mode"
+    )
+    parser.add_argument(
+        "--live-demo-port", type=int, default=None,
+        help="Base TCP port for the live-demo BizHawk viewer"
     )
     parser.add_argument(
         "--vis", action="store_true",
@@ -44,6 +66,8 @@ def main():
     from .config import load_config
     config = load_config(args.config)
     config["_mode"] = args.mode
+    backend = args.backend or config.get("backend", {}).get("type", "bizhawk")
+    config["_backend"] = backend
     if args.vis:
         config.setdefault("flags", {})["visibility"] = True
 
@@ -63,6 +87,12 @@ def main():
         _run_human_mode(config, args)
     elif args.mode == "evaluation":
         _run_evaluation_mode(config, args)
+    elif args.mode == "demo":
+        _run_demo_mode(config, args)
+    elif args.mode == "live-demo":
+        _run_live_demo_mode(config, args)
+    elif backend == "retrojet":
+        _run_retrojet_training_mode(config, args)
     else:
         _run_training_mode(config, args)
 
@@ -147,6 +177,80 @@ def _run_training_mode(config, args):
         server.stop()
         if emu_manager:
             emu_manager.close_all()
+
+
+def _run_retrojet_training_mode(config, args):
+    """Run training mode through RetroJet instead of BizHawk."""
+    from .retrojet_backend import create_retrojet_vec_env
+    from .training import TrainingManager
+
+    vec_env = create_retrojet_vec_env(config)
+    try:
+        trainer = TrainingManager(vec_env, config, args.model)
+        trainer.train()
+    finally:
+        vec_env.close()
+
+
+def _run_demo_mode(config, args):
+    """Run visible model playback in BizHawk."""
+    from .demo import run_demo_mode
+
+    model_path = args.model or os.path.join(
+        config["paths"].get("model_dir", "./models"), "model_best.zip"
+    )
+    run_demo_mode(
+        config,
+        model_path=model_path,
+        num_emulators=args.demo_emulators,
+        episodes=args.episodes,
+        no_launch=args.no_launch,
+    )
+
+
+def _run_live_demo_mode(config, args):
+    """Run RetroJet training while a visible BizHawk instance plays the model."""
+    from .demo import run_demo_mode
+
+    config["_backend"] = "retrojet"
+    config.setdefault("backend", {})["type"] = "retrojet"
+
+    model_path = args.model or os.path.join(
+        config["paths"].get("model_dir", "./models"), "model_best.zip"
+    )
+    live_base_port = args.live_demo_port
+    if live_base_port is None:
+        live_base_port = int(config["emulator"].get("base_port", 9000)) + 1000
+
+    stop_event = threading.Event()
+    demo_thread = threading.Thread(
+        target=run_demo_mode,
+        kwargs={
+            "config": config,
+            "model_path": model_path,
+            "num_emulators": 1,
+            "episodes": None,
+            "no_launch": args.no_launch,
+            "base_port": live_base_port,
+            "reload_on_change": True,
+            "wait_for_model": True,
+            "stop_event": stop_event,
+        },
+        daemon=True,
+        name="live-demo",
+    )
+
+    logger.info(
+        "Starting live demo on port %s with model %s",
+        live_base_port,
+        model_path,
+    )
+    demo_thread.start()
+    try:
+        _run_retrojet_training_mode(config, args)
+    finally:
+        stop_event.set()
+        demo_thread.join(timeout=5)
 
 
 def _run_evaluation_mode(config, args):

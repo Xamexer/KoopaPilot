@@ -5,14 +5,14 @@
 <h1 align="center">KoopaPilot</h1>
 
 <p align="center">
-  A reinforcement learning project that teaches a PPO policy to play <em>Super Mario World</em> through BizHawk, Lua scripting, and a Python training server.
+  A reinforcement learning project that teaches a PPO policy to play <em>Super Mario World</em> through BizHawk/Lua or the headless RetroJet libretro backend.
 </p>
 
 ## About the Project
 
 I have been passionate about _Super Mario World_ for a long time and have been active in the SMW scene since 2014. Over the years, I have contributed to and organized countless SMW-related projects. Eventually, I wanted to explore the game from a different angle: build a detailed reinforcement learning environment and teach Mario to play levels through training.
 
-This repository is the result. It connects one or more BizHawk emulator instances to a Python server, reads the current game state from WRAM, converts it into normalized observations, selects controller inputs with a PPO policy, and tracks training progress in a live dashboard.
+This repository is the result. It can connect one or more BizHawk emulator instances to a Python server, or use the headless RetroJet backend for faster rollout collection. In both cases it reads the current game state from WRAM, converts it into normalized observations, selects controller inputs with a PPO policy, and tracks training progress in a live dashboard.
 
 ## Preview
 
@@ -28,11 +28,14 @@ This repository is the result. It connects one or more BizHawk emulator instance
 
 - Parallel training with configurable BizHawk instances
 - TCP communication between BizHawk Lua scripts and the Python server
+- Headless RetroJet backend for faster libretro/Snes9x rollout collection
 - Savestate-based resets and optional level warping
 - PPO training with checkpointing, frame stacking, and resume support
 - Tile-grid, sprite, movement, and player-state observations
 - Reward shaping for progress, goals, coins, powerups, pipes, doors, enemies, deaths, and inactivity
 - Evaluation mode with visible overlays and MP4 recording
+- Demo mode for watching a saved model play in visible BizHawk at 100% speed
+- Live-demo mode for RetroJet training with one separate visible BizHawk viewer
 - Human-play mode for checking reward behavior manually
 - Flask dashboard for live metrics and run comparisons
 
@@ -42,10 +45,18 @@ This repository is the result. It connects one or more BizHawk emulator instance
 +-----------------------------+        TCP sockets        +-----------------------------+
 | Python PPO training server  | <-----------------------> | BizHawk emulator + Lua      |
 |                             |                           | smw_agent.lua               |
-| - Gymnasium env / vectors   |                           | - WRAM reads                |
-| - observations + rewards    |                           | - controller input          |
-| - metrics + Flask dashboard |                           | - savestate resets          |
+| - observations + rewards    |                           | - WRAM reads / overlays     |
+| - metrics + Flask dashboard |                           | - controller input          |
 +-----------------------------+                           +-----------------------------+
+              |
+              | optional headless backend
+              v
++-----------------------------+
+| RetroJet libretro runner    |
+| - Snes9x cores              |
+| - direct WRAM read/write    |
+| - native batched stepping   |
++-----------------------------+
 ```
 
 ## Requirements
@@ -55,6 +66,7 @@ This repository is the result. It connects one or more BizHawk emulator instance
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - [BizHawk](https://tasvideos.org/BizHawk) with a SNES-compatible core
 - Your own legally obtained _Super Mario World_ ROM
+- Optional for RetroJet: Rust, Cargo, and the separate `RetroJet` repository
 
 BizHawk binaries and ROM files are intentionally not included in this repository.
 
@@ -94,6 +106,72 @@ BizHawk binaries and ROM files are intentionally not included in this repository
 6. Review `config.json`, especially the paths, emulator count, ports, savestate settings, reward values, and PPO hyperparameters.
 
 `uv` creates and manages the local `.venv` automatically. Dependencies are declared in `pyproject.toml`; exact resolved versions live in `uv.lock`.
+
+## RetroJet Setup
+
+RetroJet is a separate private repository that should live next to KoopaPilot:
+
+```text
+D:\Hobby\Programmieren\
+|-- KoopaPilot\
+`-- RetroJet\
+```
+
+Build RetroJet:
+
+```powershell
+cd D:\Hobby\Programmieren\RetroJet
+uv sync --extra dev
+.\scripts\download_cores.ps1
+$env:CONDA_PREFIX=$null
+uv run maturin develop --release
+```
+
+Make sure the ROM exists at:
+
+```text
+D:\Hobby\Programmieren\RetroJet\roms\Super Mario World.sfc
+```
+
+Install RetroJet into KoopaPilot's environment:
+
+```powershell
+cd D:\Hobby\Programmieren\KoopaPilot
+$env:CONDA_PREFIX=$null
+uv pip install -e ..\RetroJet
+```
+
+Quick RetroJet benchmark:
+
+```powershell
+cd D:\Hobby\Programmieren\RetroJet
+uv run retrojet-benchmark --core ./cores/snes9x2010_libretro.dll --rom "./roms/Super Mario World.sfc" --envs 32 --frames 1200 --frame-skip 4 --level 0x105
+```
+
+On the current local machine, `snes9x2010` with 32 envs and `frame_skip=4`
+measured roughly `4,000` RetroJet env steps/s on level `0x105`.
+
+## Typical RetroJet Workflow
+
+1. Build RetroJet and install it into KoopaPilot's `.venv` as shown above.
+2. Configure `backend.type` as `retrojet`, or pass `--backend retrojet`.
+3. Start fast headless training:
+
+   ```powershell
+   uv run koopapilot --mode training --backend retrojet
+   ```
+
+4. To watch training progress live, use the viewer mode instead:
+
+   ```powershell
+   uv run koopapilot --mode live-demo
+   ```
+
+5. To inspect a saved checkpoint without training:
+
+   ```powershell
+   uv run koopapilot --mode demo --model ./models/model_best.zip
+   ```
 
 ## Creating Savestates
 
@@ -159,6 +237,24 @@ Evaluate a fixed number of episodes:
 uv run koopapilot --mode evaluation --model ./models/model_best.zip --episodes 5
 ```
 
+Watch a trained model play normally in BizHawk at 100% speed:
+
+```powershell
+uv run koopapilot --mode demo --model ./models/model_best.zip
+```
+
+Run a longer demo with multiple visible BizHawk instances:
+
+```powershell
+uv run koopapilot --mode demo --model ./models/model_best.zip --demo-emulators 2 --episodes 10
+```
+
+Demo mode does not train. It loads the selected PPO checkpoint, applies the
+same observation, reward, reset, and controller pipeline as training, and lets
+the agent play visibly in BizHawk. If `--model` is omitted, KoopaPilot uses
+`./models/model_best.zip`. If `--episodes` is omitted, the demo runs until
+Ctrl+C.
+
 Play manually while inspecting reward events:
 
 ```powershell
@@ -175,6 +271,61 @@ Connect to emulator instances that are already running:
 
 ```powershell
 uv run koopapilot --mode training --no-launch
+```
+
+Run training through the experimental RetroJet headless backend:
+
+```powershell
+uv run koopapilot --mode training --backend retrojet
+```
+
+Train through RetroJet while watching one live BizHawk demo instance:
+
+```powershell
+uv run koopapilot --mode live-demo
+```
+
+`live-demo` forces the RetroJet backend for training and starts one extra
+BizHawk instance at 100% speed. That viewer waits for `./models/model_best.zip`
+by default, then reloads it whenever the file changes, so you can see whether
+the current best model is improving without slowing the headless rollout
+collection. The viewer uses a separate socket range at `emulator.base_port +
+1000`; override it with `--live-demo-port` if needed.
+
+RetroJet is a separate native libretro/Snes9x batch runner intended for
+high-throughput headless rollout collection. It uses libretro-compatible
+savestates, not BizHawk `.State` files. BizHawk remains the recommended backend
+for visual debugging, overlays, human reward inspection, and evaluation.
+When `level_loading.mode` is `level_loading`, RetroJet can use the configured
+Lunar Magic level IDs through its native ROM-backed level-load path.
+
+For faster RetroJet training, add this section to `config.json`:
+
+```json
+"backend": {
+  "type": "retrojet",
+  "retrojet": {
+    "core_path": "../RetroJet/cores/snes9x2010_libretro.dll",
+    "rom_path": "../RetroJet/roms/Super Mario World.sfc",
+    "num_envs": 32,
+    "frame_skip": 4,
+    "boot_frames": 300,
+    "level_ids": ["0x105", "0x106"],
+    "savestate_paths": []
+  }
+}
+```
+
+With `backend.type` set to `retrojet`, this is enough:
+
+```powershell
+uv run koopapilot --mode training
+```
+
+Force BizHawk instead:
+
+```powershell
+uv run koopapilot --mode training --backend bizhawk
 ```
 
 Use another configuration file:
@@ -199,6 +350,7 @@ All runtime settings live in `config.json`.
 | ----------------- | ------------------------------------------------------------------------------ |
 | `paths`           | Local BizHawk, ROM, Lua script, savestate, model, log, and video paths         |
 | `emulator`        | Instance count, socket ports, speed, frame skip, sound, and window layout      |
+| `backend`         | Optional backend selection: `bizhawk` or `retrojet`                            |
 | `flags`           | Tile, reward, and controller overlay visibility                                |
 | `level_loading`   | Savestate scanning, explicit state files, or Lunar Magic level IDs for warping |
 | `ram_addresses`   | WRAM addresses used as a readable reference for the integration                |
@@ -213,8 +365,14 @@ Important variables:
 | Variable                       | Default   | Notes                                                     |
 | ------------------------------ | --------- | --------------------------------------------------------- |
 | `emulator.num_instances`       | `8`       | Number of parallel BizHawk processes                      |
+| `backend.type`                 | unset     | Use `retrojet` for headless libretro training             |
+| `backend.retrojet.num_envs`    | fallback  | Number of headless RetroJet environments                  |
+| `backend.retrojet.core_path`   | auto      | Prefer `../RetroJet/cores/snes9x2010_libretro.dll`        |
+| `backend.retrojet.frame_skip`  | fallback  | Frames repeated for each RetroJet action                  |
 | `emulator.base_port`           | `9000`    | First TCP port; following instances use consecutive ports |
+| `--live-demo-port`             | `10000`   | First TCP port for the optional live-demo BizHawk viewer  |
 | `emulator.speed_percent`       | `6400`    | BizHawk speed during training                             |
+| demo speed                     | `100`     | Demo and live-demo BizHawk instances always run normally  |
 | `emulator.frame_skip`          | `4`       | Frames repeated for each selected action                  |
 | `normalization.grid_size`      | `21`      | Odd-sized tile grid centered around Mario                 |
 | `normalization.max_sprite_hitbox_dimension` | `128` | Scale reserved for normalized sprite footprint dimensions |
@@ -245,7 +403,7 @@ With the default `21 x 21` tile grid, one observation contains `562` values befo
 | Movement state        |    4 | One-hot ground, air, water, or climbing state                      |
 | Level orientation     |    1 | Horizontal or vertical level flag                                  |
 | Tile grid             |  441 | `21 x 21` normalized Map16 categories                              |
-| Sprites               |  108 | 12 slots with active state, ID, position, stable default footprint, velocity, and misc state |
+| Sprites               |  108 | 12 slots with active state, ID, position, native or platform-specific interaction footprint, velocity, and misc state |
 
 With the default four-frame stack, PPO receives `2248` values per environment step.
 
@@ -317,9 +475,11 @@ Training runs write JSON metrics below `./logs/`. The Flask dashboard can:
 |   `-- smw_agent.lua
 |-- server/
 |   |-- main.py
+|   |-- demo.py
 |   |-- environment.py
 |   |-- vec_env.py
 |   |-- socket_server.py
+|   |-- retrojet_backend.py
 |   |-- observation.py
 |   |-- reward.py
 |   |-- training.py

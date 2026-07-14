@@ -109,6 +109,21 @@ class ConfigTests(unittest.TestCase):
 
         _validate(config)
 
+    def test_retrojet_backend_uses_retrojet_env_count_for_rollout_validation(self):
+        config = minimal_config()
+        config["emulator"]["num_instances"] = 1
+        config["ppo"]["n_steps"] = 128
+        config["ppo"]["batch_size"] = 256
+        config["backend"] = {
+            "type": "retrojet",
+            "retrojet": {
+                "num_envs": 2,
+                "frame_skip": 4,
+            },
+        }
+
+        _validate(config)
+
 
 if __name__ == "__main__":
     unittest.main()
