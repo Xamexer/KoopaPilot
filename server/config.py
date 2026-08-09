@@ -1,11 +1,14 @@
 """Configuration loader and validator."""
 
 import json
+import logging
 import os
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 
-def load_config(config_path: str = "config.json") -> dict:
+
+def load_config(config_path: str = "config.json", backend: str | None = None) -> dict:
     """Load configuration from JSON file."""
     path = Path(config_path).resolve()
     if not path.exists():
@@ -14,7 +17,10 @@ def load_config(config_path: str = "config.json") -> dict:
     with open(path, "r") as f:
         config = json.load(f)
 
+    if backend is not None:
+        config.setdefault("backend", {})["type"] = backend
     _resolve_paths(config, path.parent)
+    config["_config_dir"] = str(path.parent)
     _validate(config)
     return config
 
@@ -57,11 +63,28 @@ def _validate(config: dict):
     base_port = emu.get("base_port", 9000)
     frame_skip = emu.get("frame_skip", 4)
     if num_instances < 1:
-        raise ValueError("num_instances must be >= 1")
+        setting = (
+            "backend.retrojet.num_envs"
+            if is_retrojet
+            else "emulator.num_instances"
+        )
+        raise ValueError(f"{setting} must be >= 1")
     if base_port <= 1024 or base_port + num_instances - 1 > 65535:
         raise ValueError("emulator ports must stay within the range 1025-65535")
     if frame_skip < 1:
         raise ValueError("frame_skip must be >= 1")
+
+    performance = config.get("performance", {})
+    for setting in ("torch_threads", "retrojet_threads"):
+        thread_count = performance.get(setting)
+        if thread_count is not None and (
+            isinstance(thread_count, bool)
+            or not isinstance(thread_count, int)
+            or thread_count < 1
+        ):
+            raise ValueError(
+                f"performance.{setting} must be a positive integer"
+            )
 
     ppo = config.get("ppo", {})
     if ppo.get("n_steps", 2048) <= 0:
@@ -117,10 +140,70 @@ def _validate(config: dict):
         if backend_type not in {"bizhawk", "retrojet"}:
             raise ValueError("backend.type must be 'bizhawk' or 'retrojet'")
         if backend_type == "retrojet" and isinstance(retrojet, dict):
+            _validate_retrojet_legacy_overrides(config, retrojet)
             if retrojet.get("num_envs", num_instances) < 1:
                 raise ValueError("backend.retrojet.num_envs must be >= 1")
             if retrojet.get("frame_skip", frame_skip) < 1:
                 raise ValueError("backend.retrojet.frame_skip must be >= 1")
+
+
+def _validate_retrojet_legacy_overrides(config: dict, retrojet: dict):
+    """Reject ambiguous legacy overrides while keeping old configs readable."""
+    paths = config.get("paths", {})
+    emulator = config.get("emulator", {})
+    level_loading = config.get("level_loading", {})
+
+    if "rom_path" in retrojet:
+        logger.warning(
+            "backend.retrojet.rom_path is deprecated; use paths.rom instead"
+        )
+        shared_rom = paths.get("rom")
+        if shared_rom and not _same_path(shared_rom, retrojet["rom_path"]):
+            raise ValueError(
+                "backend.retrojet.rom_path conflicts with paths.rom; "
+                "configure the ROM once in paths.rom"
+            )
+
+    if "frame_skip" in retrojet:
+        logger.warning(
+            "backend.retrojet.frame_skip is deprecated; use "
+            "emulator.frame_skip instead"
+        )
+        if (
+            "frame_skip" in emulator
+            and int(retrojet["frame_skip"]) != int(emulator["frame_skip"])
+        ):
+            raise ValueError(
+                "backend.retrojet.frame_skip conflicts with "
+                "emulator.frame_skip; configure frame skip once"
+            )
+
+    if "level_ids" in retrojet:
+        logger.warning(
+            "backend.retrojet.level_ids is deprecated; use "
+            "level_loading.levels instead"
+        )
+        if "levels" in level_loading:
+            legacy_levels = [_parse_level_id(value)
+                             for value in retrojet["level_ids"]]
+            if legacy_levels != get_level_ids(config):
+                raise ValueError(
+                    "backend.retrojet.level_ids conflicts with "
+                    "level_loading.levels; configure levels once"
+                )
+
+
+def _same_path(left: str, right: str) -> bool:
+    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(
+        os.path.abspath(right)
+    )
+
+
+def _parse_level_id(value) -> int:
+    """Parse quoted Lunar Magic IDs consistently as hexadecimal."""
+    if isinstance(value, str):
+        return int(value, 16)
+    return int(value)
 
 
 def get_savestate_files(config: dict) -> list:
@@ -165,10 +248,4 @@ def get_savestate_files(config: dict) -> list:
 def get_level_ids(config: dict) -> list:
     """Parse level ID strings (e.g., '0x105') to integers."""
     levels = config.get("level_loading", {}).get("levels", [])
-    result = []
-    for lv in levels:
-        if isinstance(lv, str):
-            result.append(int(lv, 16))
-        else:
-            result.append(int(lv))
-    return result
+    return [_parse_level_id(level) for level in levels]

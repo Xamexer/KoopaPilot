@@ -272,6 +272,8 @@ function updateCompareList() {
 function updateDashboard() {
   if (!currentRun) return;
   const iters = currentRun.data.iterations || [];
+  const evaluations = currentRun.data.evaluations || [];
+  const latestEvaluation = evaluations[evaluations.length - 1];
 
   // Show message if no data yet
   if (iters.length === 0) {
@@ -279,6 +281,15 @@ function updateDashboard() {
     document.getElementById('statEpisodes').textContent = '0';
     document.getElementById('statMeanReward').textContent = 'No data yet';
     document.getElementById('statBestReward').textContent = 'Training...';
+    document.getElementById('statGoalRate').textContent = '-';
+    document.getElementById('statViewerReward').textContent = latestEvaluation
+      ? Number(latestEvaluation.reward).toFixed(1)
+      : '-';
+    document.getElementById('statViewerGoal').textContent = latestEvaluation
+      ? latestEvaluation.goal_reached
+        ? 'Yes'
+        : 'No'
+      : '-';
     document.getElementById('statMeanMaxX').textContent = '-';
     document.getElementById('statBestMaxX').textContent = '-';
 
@@ -290,8 +301,7 @@ function updateDashboard() {
       .join('');
 
     // Clear charts
-    rewardChart.data.datasets = [];
-    rewardChart.update('none');
+    updateCharts();
     lengthChart.data.datasets = [];
     lengthChart.update('none');
     progressChart.data.datasets = [];
@@ -313,10 +323,23 @@ function updateDashboard() {
   document.getElementById('statBestReward').textContent = last
     ? last.max_reward.toFixed(1)
     : '-';
+  document.getElementById('statGoalRate').textContent =
+    last && last.goal_rate !== undefined
+      ? `${(last.goal_rate * 100).toFixed(0)}%`
+      : '-';
   document.getElementById('statMeanMaxX').textContent =
     last && last.mean_max_x !== undefined ? last.mean_max_x.toFixed(0) : '-';
   document.getElementById('statBestMaxX').textContent =
     last && last.max_x !== undefined ? last.max_x.toFixed(0) : '-';
+
+  document.getElementById('statViewerReward').textContent = latestEvaluation
+    ? Number(latestEvaluation.reward).toFixed(1)
+    : '-';
+  document.getElementById('statViewerGoal').textContent = latestEvaluation
+    ? latestEvaluation.goal_reached
+      ? 'Yes'
+      : 'No'
+    : '-';
 
   // Config table
   const cfg = currentRun.data.config_summary || {};
@@ -358,6 +381,21 @@ function updateCharts() {
       pointRadius: 0,
       tension: 0.3,
     });
+    const evaluations = run.data.evaluations || [];
+    if (evaluations.length > 0) {
+      datasets.push({
+        label: `Deterministic viewer (${run.name})`,
+        data: evaluations.map((item) => ({
+          x: Number(item.timestep),
+          y: Number(item.reward),
+        })),
+        borderColor: CHART_COLORS[colorIdx % CHART_COLORS.length],
+        backgroundColor: CHART_COLORS[colorIdx % CHART_COLORS.length],
+        showLine: false,
+        pointRadius: 4,
+        pointStyle: 'triangle',
+      });
+    }
   };
 
   addDataset(currentRun, 0);

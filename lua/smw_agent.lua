@@ -392,10 +392,111 @@ end
 -- ============================================================================
 -- Read sprite data
 -- ============================================================================
--- Keep a stable sprite footprint in the observation schema so existing
--- checkpoints remain compatible without embedding game-specific tables.
-local function read_sprite_footprint()
-    return { offset_x = 0, offset_y = 0, width = 16, height = 16 }
+-- SMW's native sprite clipping tables, indexed by the lower six bits of
+-- SpriteTweakerB ($1662 + sprite slot). Reading the live tweaker byte also
+-- captures sprites that change their clipping type while the level is running.
+local SPRITE_CLIPPING_DISP_X = {
+    0x02, 0x02, 0x10, 0x14, 0x00, 0x00, 0x01, 0x08,
+    0xF8, 0xFE, 0x03, 0x06, 0x01, 0x00, 0x06, 0x02,
+    0x00, 0xE8, 0xFC, 0xFC, 0x04, 0x00, 0xFC, 0x02,
+    0x02, 0x02, 0x02, 0x02, 0x00, 0x02, 0xE0, 0xF0,
+    0xFC, 0xFC, 0x00, 0xF8, 0xF4, 0xF2, 0x00, 0xFC,
+    0xF2, 0xF0, 0x02, 0x00, 0xF8, 0x04, 0x02, 0x02,
+    0x08, 0x00, 0x00, 0x00, 0xFC, 0x03, 0x08, 0x00,
+    0x08, 0x04, 0xF8, 0x00
+}
+
+local SPRITE_CLIPPING_WIDTH = {
+    0x0C, 0x0C, 0x10, 0x08, 0x30, 0x50, 0x0E, 0x28,
+    0x20, 0x14, 0x01, 0x03, 0x0D, 0x0F, 0x14, 0x24,
+    0x0F, 0x40, 0x08, 0x08, 0x18, 0x0F, 0x18, 0x0C,
+    0x0C, 0x0C, 0x0C, 0x0C, 0x0A, 0x1C, 0x30, 0x30,
+    0x08, 0x08, 0x10, 0x20, 0x38, 0x3C, 0x20, 0x18,
+    0x1C, 0x20, 0x0C, 0x10, 0x10, 0x08, 0x1C, 0x1C,
+    0x10, 0x30, 0x30, 0x40, 0x08, 0x12, 0x34, 0x0F,
+    0x20, 0x08, 0x20, 0x10
+}
+
+local SPRITE_CLIPPING_DISP_Y = {
+    0x03, 0x03, 0xFE, 0x08, 0xFE, 0xFE, 0x02, 0x08,
+    0xFE, 0x08, 0x07, 0x06, 0xFE, 0xFC, 0x06, 0xFE,
+    0xFE, 0xE8, 0x10, 0x10, 0x02, 0xFE, 0xF4, 0x08,
+    0x13, 0x23, 0x33, 0x43, 0x0A, 0xFD, 0xF8, 0xFC,
+    0xE8, 0x10, 0x00, 0xE8, 0x20, 0x04, 0x58, 0xFC,
+    0xE8, 0xFC, 0xF8, 0x02, 0xF8, 0x04, 0xFE, 0xFE,
+    0xF2, 0xFE, 0xFE, 0xFE, 0xFC, 0x00, 0x08, 0xF8,
+    0x10, 0x03, 0x10, 0x00
+}
+
+local SPRITE_CLIPPING_HEIGHT = {
+    0x0A, 0x15, 0x12, 0x08, 0x0E, 0x0E, 0x18, 0x30,
+    0x10, 0x1E, 0x02, 0x03, 0x16, 0x10, 0x14, 0x12,
+    0x20, 0x40, 0x34, 0x74, 0x0C, 0x0E, 0x18, 0x45,
+    0x3A, 0x2A, 0x1A, 0x0A, 0x30, 0x1B, 0x20, 0x12,
+    0x18, 0x18, 0x10, 0x20, 0x38, 0x14, 0x08, 0x18,
+    0x28, 0x1B, 0x13, 0x4C, 0x10, 0x04, 0x22, 0x20,
+    0x1C, 0x12, 0x12, 0x12, 0x08, 0x20, 0x2E, 0x14,
+    0x28, 0x0A, 0x10, 0x0D
+}
+
+local function signed_byte(value)
+    if value >= 0x80 then
+        return value - 0x100
+    end
+    return value
+end
+
+-- Reproduce SMW's 512-step circle lookup closely enough to locate parts that
+-- rotate around a stationary sprite origin.
+local function circle_offset(angle, radius)
+    local radians = (angle & 0x1FF) * (2 * math.pi / 512)
+    local sine = math.sin(radians)
+    local magnitude = math.floor(math.abs(sine) * 256 + 0.000001)
+    if magnitude > 256 then magnitude = 256 end
+
+    local offset = math.floor(radius * magnitude / 256)
+    if sine < 0 then return -offset end
+    return offset
+end
+
+local function read_brown_chain_platform_footprint(slot, sprite_world_x, sprite_world_y)
+    local angle = ((read_u8(0x1528 + slot) & 0x01) << 8) | read_u8(0x151C + slot)
+    local platform_x = sprite_world_x - 0x50 + circle_offset(angle + 0x80, 0x50)
+    local platform_y = sprite_world_y + circle_offset(angle, 0x50)
+
+    -- Sprite 5F uses this custom rectangle for Mario/platform interaction.
+    return {
+        offset_x = platform_x - 0x18 - sprite_world_x,
+        offset_y = platform_y - 0x0C - sprite_world_y,
+        width = 0x40,
+        height = 0x13
+    }
+end
+
+local function read_turn_block_bridge_footprint(slot)
+    local state = read_u8(0x00C2 + slot)
+    local radius = read_u8(0x151C + slot)
+    if (state & 0x02) ~= 0 then
+        return { offset_x = 0, offset_y = -radius, width = 16, height = radius * 2 + 16 }
+    end
+    return { offset_x = -radius, offset_y = 0, width = radius * 2 + 16, height = 16 }
+end
+
+local function read_sprite_footprint(slot, sprite_id, sprite_world_x, sprite_world_y)
+    if sprite_id == 0x5F then
+        return read_brown_chain_platform_footprint(slot, sprite_world_x, sprite_world_y)
+    end
+    if sprite_id == 0x59 or sprite_id == 0x5A then
+        return read_turn_block_bridge_footprint(slot)
+    end
+
+    local clipping_index = (read_u8(0x1662 + slot) & 0x3F) + 1
+    return {
+        offset_x = signed_byte(SPRITE_CLIPPING_DISP_X[clipping_index]),
+        offset_y = signed_byte(SPRITE_CLIPPING_DISP_Y[clipping_index]),
+        width = SPRITE_CLIPPING_WIDTH[clipping_index],
+        height = SPRITE_CLIPPING_HEIGHT[clipping_index]
+    }
 end
 
 local function read_sprites(camera_x, camera_y)
@@ -408,9 +509,11 @@ local function read_sprites(camera_x, camera_y)
         local sy_low = read_u8(0x00D8 + i)
         local sy_high = read_u8(0x14D4 + i)
 
-        local hitbox = read_sprite_footprint()
-        local hitbox_world_x = ((sx_high << 8) | sx_low) + hitbox.offset_x
-        local hitbox_world_y = ((sy_high << 8) | sy_low) + hitbox.offset_y
+        local sprite_world_x = (sx_high << 8) | sx_low
+        local sprite_world_y = (sy_high << 8) | sy_low
+        local hitbox = read_sprite_footprint(i, sprite_id, sprite_world_x, sprite_world_y)
+        local hitbox_world_x = sprite_world_x + hitbox.offset_x
+        local hitbox_world_y = sprite_world_y + hitbox.offset_y
         local world_x = hitbox_world_x + hitbox.width / 2
         local world_y = hitbox_world_y + hitbox.height / 2
         local screen_x = world_x - camera_x

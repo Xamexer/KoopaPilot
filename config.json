@@ -21,16 +21,38 @@
     "frame_skip": 4
   },
 
+  "backend": {
+    "_comment": "Backend-specific settings only. ROM, levels, and frame skip are shared above/below.",
+    "type": "retrojet",
+    "retrojet": {
+      "core_path": "../RetroJet/cores/snes9x2010_libretro.dll",
+      "num_envs": 16,
+      "boot_frames": 300,
+      "savestate_paths": []
+    }
+  },
+
+  "live_demo": {
+    "_comment": "When --mode live-demo is used, the current PPO model is saved here every N timesteps for the visible BizHawk viewer.",
+    "save_interval_steps": 10000
+  },
+
+  "performance": {
+    "_comment": "Conservative CPU limits for stable long-running training; raise only after monitoring temperatures and system stability.",
+    "torch_threads": 4,
+    "retrojet_threads": 4
+  },
+
   "flags": {
-    "visibility": false,
-    "reward_display": false,
+    "visibility": true,
+    "reward_display": true,
     "button_input_display": false
   },
 
   "level_loading": {
     "_comment": "Full level loads use quoted hexadecimal Lunar Magic IDs",
     "mode": "level_loading",
-    "levels": ["0x103"],
+    "levels": ["0x105", "0x106"],
     "savestate_files": []
   },
 
@@ -116,8 +138,8 @@
 
   "rewards": {
     "_comment": "x_progress_per_pixel: reward only for NEW max X (no backtracking reward)",
-    "x_progress_per_pixel": 0.3,
-    "y_progress_per_pixel": 0.3,
+    "x_progress_per_pixel": 0.25,
+    "y_progress_per_pixel": 0.1,
     "goal_reached": 1000.0,
     "coin_collected": 0.0,
     "powerup_upgrade": 20.0,
@@ -125,10 +147,10 @@
     "pipe_door_entered": 50.0,
     "enemy_killed": 10.0,
     "enemy_stunned": 10.0,
-    "death_penalty": -30.0,
+    "death_penalty": -100.0,
     "powerup_downgrade": -10.0,
-    "time_penalty_per_step": -0.05,
-    "exploration_new_cell": 0.25,
+    "time_penalty_per_step": -0.25,
+    "exploration_new_cell": 0.0,
     "exploration_cell_size_pixels": 16,
     "teleport_threshold_pixels": 256
   },
@@ -137,7 +159,7 @@
     "learning_rate": 2.5e-4,
     "lr_schedule": "linear",
     "n_steps": 128,
-    "batch_size": 256,
+    "batch_size": 512,
     "n_epochs": 4,
     "gamma": 0.99,
     "gae_lambda": 0.95,

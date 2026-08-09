@@ -41,23 +41,15 @@ This repository is the result. It can connect one or more BizHawk emulator insta
 
 ## Architecture
 
-```text
-+-----------------------------+        TCP sockets        +-----------------------------+
-| Python PPO training server  | <-----------------------> | BizHawk emulator + Lua      |
-|                             |                           | smw_agent.lua               |
-| - observations + rewards    |                           | - WRAM reads / overlays     |
-| - metrics + Flask dashboard |                           | - controller input          |
-+-----------------------------+                           +-----------------------------+
-              |
-              | optional headless backend
-              v
-+-----------------------------+
-| RetroJet libretro runner    |
-| - Snes9x cores              |
-| - direct WRAM read/write    |
-| - native batched stepping   |
-+-----------------------------+
-```
+<p align="center">
+  <img src="docs/images/architecture.png" alt="KoopaPilot architecture with BizHawk and RetroJet backends, live-demo model mirroring, and dashboard metrics" width="900">
+</p>
+
+BizHawk and RetroJet implement the same environment contract: normalized
+observations, 12 controller actions, and shared reward logic. BizHawk favors
+visibility and debugging; RetroJet favors high-throughput headless training.
+The diagram can be regenerated with
+`uv run python ./docs/generate_architecture_diagram.py`.
 
 ## Requirements
 
@@ -66,7 +58,8 @@ This repository is the result. It can connect one or more BizHawk emulator insta
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - [BizHawk](https://tasvideos.org/BizHawk) with a SNES-compatible core
 - Your own legally obtained _Super Mario World_ ROM
-- Optional for RetroJet: Rust, Cargo, and the separate `RetroJet` repository
+- For the configured default RetroJet backend: Rust, Cargo, and the separate
+  `RetroJet` repository. BizHawk-only runs can skip these.
 
 BizHawk binaries and ROM files are intentionally not included in this repository.
 
@@ -97,81 +90,60 @@ BizHawk binaries and ROM files are intentionally not included in this repository
    ./roms/Super Mario World.sfc
    ```
 
-5. Create one or more BizHawk savestates and place the `.State` files in:
+5. Optional: if you prefer savestate resets, create one or more BizHawk
+   savestates and place the `.State` files in:
 
    ```text
    ./savestates/
    ```
 
-6. Review `config.json`, especially the paths, emulator count, ports, savestate settings, reward values, and PPO hyperparameters.
+6. Review `config.json`, especially the paths, backend, emulator count, ports, level IDs, reward values, and PPO hyperparameters.
 
 `uv` creates and manages the local `.venv` automatically. Dependencies are declared in `pyproject.toml`; exact resolved versions live in `uv.lock`.
 
 ## RetroJet Setup
 
-RetroJet is a separate private repository that should live next to KoopaPilot:
+RetroJet is a separate repository that should live next to KoopaPilot:
 
 ```text
-D:\Hobby\Programmieren\
-|-- KoopaPilot\
-`-- RetroJet\
+parent-directory/
+|-- KoopaPilot/
+`-- RetroJet/
 ```
+
+The supplied `config.json` selects RetroJet for normal training. Complete this
+section before using the bare `uv run koopapilot` command, or select the
+self-contained BizHawk backend explicitly with `--backend bizhawk`.
 
 Build RetroJet:
 
 ```powershell
-cd D:\Hobby\Programmieren\RetroJet
+cd ../RetroJet
 uv sync --extra dev
 .\scripts\download_cores.ps1
 $env:CONDA_PREFIX=$null
 uv run maturin develop --release
 ```
 
-Make sure the ROM exists at:
-
-```text
-D:\Hobby\Programmieren\RetroJet\roms\Super Mario World.sfc
-```
-
 Install RetroJet into KoopaPilot's environment:
 
 ```powershell
-cd D:\Hobby\Programmieren\KoopaPilot
+cd ../KoopaPilot
 $env:CONDA_PREFIX=$null
-uv pip install -e ..\RetroJet
+uv pip install -e ../RetroJet
 ```
+
+KoopaPilot uses the single ROM configured by `paths.rom` for both backends;
+the default remains `./roms/Super Mario World.sfc`.
 
 Quick RetroJet benchmark:
 
 ```powershell
-cd D:\Hobby\Programmieren\RetroJet
-uv run retrojet-benchmark --core ./cores/snes9x2010_libretro.dll --rom "./roms/Super Mario World.sfc" --envs 32 --frames 1200 --frame-skip 4 --level 0x105
+cd ../RetroJet
+uv run retrojet-benchmark --core ./cores/snes9x2010_libretro.dll --rom "../KoopaPilot/roms/Super Mario World.sfc" --envs 16 --threads 4 --frames 1200 --frame-skip 4 --level 0x105
 ```
 
-On the current local machine, `snes9x2010` with 32 envs and `frame_skip=4`
-measured roughly `4,000` RetroJet env steps/s on level `0x105`.
-
-## Typical RetroJet Workflow
-
-1. Build RetroJet and install it into KoopaPilot's `.venv` as shown above.
-2. Configure `backend.type` as `retrojet`, or pass `--backend retrojet`.
-3. Start fast headless training:
-
-   ```powershell
-   uv run koopapilot --mode training --backend retrojet
-   ```
-
-4. To watch training progress live, use the viewer mode instead:
-
-   ```powershell
-   uv run koopapilot --mode live-demo
-   ```
-
-5. To inspect a saved checkpoint without training:
-
-   ```powershell
-   uv run koopapilot --mode demo --model ./models/model_best.zip
-   ```
+Run the benchmark on your own machine to choose a suitable `num_envs` value.
 
 ## Creating Savestates
 
@@ -202,145 +174,58 @@ episode reset or registered death. Select only first rooms that can be
 entered from the overworld (`0x001`-`0x024` or `0x101`-`0x1DB`), not
 sublevels that are reachable only through doors or pipes.
 
-## Commands
+## Running KoopaPilot
 
-Start a fresh training run:
+Run commands from the KoopaPilot project directory. Training is the default
+mode, and every active mode starts the dashboard at
+[http://127.0.0.1:8080](http://127.0.0.1:8080).
 
-```powershell
-uv run koopapilot --mode training
-```
+| Goal | Command |
+| --- | --- |
+| Train with the configured backend (RetroJet by default) | `uv run koopapilot` |
+| Continue training from a checkpoint | `uv run koopapilot --model ./models/model_best.zip` |
+| Train with visible BizHawk instances and overlays | `uv run koopapilot --backend bizhawk --vis` |
+| Train in RetroJet while watching one live BizHawk viewer | `uv run koopapilot --mode live-demo` |
+| Watch a checkpoint without training | `uv run koopapilot --mode demo --model ./models/model_best.zip` |
+| Evaluate five visible episodes and record video | `uv run koopapilot --mode evaluation --model ./models/model_best.zip --episodes 5` |
+| Play manually and inspect reward events | `uv run koopapilot --mode human` |
+| Run only the dashboard | `uv run koopapilot --mode dashboard` |
 
-Show the colored tile grid and sprite markers during training:
+### What the modes mean
 
-```powershell
-uv run koopapilot --mode training --vis
-```
+- `training` collects stochastic PPO rollouts and updates the policy. Select
+  `retrojet` or `bizhawk` with `backend.type` in `config.json`; `--backend`
+  provides a one-run override.
+- `live-demo` also trains stochastically in RetroJet, but mirrors the current
+  policy into managed `model_live.generation-*.zip` files for a deterministic
+  visible BizHawk viewer. Immutable generations avoid Windows file-lock races.
+  A checkpoint passed with `--model` initializes the trainer, while the writable
+  viewer mirror always uses separate paths. Mirror updates are loaded only
+  between viewer episodes, and each evaluation records its checkpoint timestep.
+- `demo` is deterministic playback without training. `evaluation` adds a
+  fixed episode count, overlays, and video recording.
+- `human` lets you verify reward events manually. `dashboard` serves existing
+  run files without starting an emulator.
 
-Resume training from a checkpoint:
+The dashboard labels stochastic training statistics and deterministic
+live-viewer episodes separately. These values can differ substantially: PPO
+samples exploratory actions during training, while the viewer always chooses
+the most likely action. Goal rate is therefore usually more informative than
+comparing a single visible episode with the mean of many parallel rollouts.
 
-```powershell
-uv run koopapilot --mode training --model ./models/model_best.zip
-```
+### Useful options
 
-Checkpoints require the same observation-space, action-space, and PPO rollout
-settings that were used when they were created.
+- `--config ./my_config.json` selects another full configuration.
+- `--no-launch` connects to BizHawk instances that are already running.
+- `--demo-emulators 2 --episodes 10` runs a finite multi-window demo.
+- `--live-demo-port 10000` changes the viewer's socket port.
+- `uv run koopapilot --help` lists every CLI option.
 
-Evaluate a trained model with visible overlays and video recording:
-
-```powershell
-uv run koopapilot --mode evaluation --model ./models/model_best.zip
-```
-
-Evaluate a fixed number of episodes:
-
-```powershell
-uv run koopapilot --mode evaluation --model ./models/model_best.zip --episodes 5
-```
-
-Watch a trained model play normally in BizHawk at 100% speed:
-
-```powershell
-uv run koopapilot --mode demo --model ./models/model_best.zip
-```
-
-Run a longer demo with multiple visible BizHawk instances:
-
-```powershell
-uv run koopapilot --mode demo --model ./models/model_best.zip --demo-emulators 2 --episodes 10
-```
-
-Demo mode does not train. It loads the selected PPO checkpoint, applies the
-same observation, reward, reset, and controller pipeline as training, and lets
-the agent play visibly in BizHawk. If `--model` is omitted, KoopaPilot uses
-`./models/model_best.zip`. If `--episodes` is omitted, the demo runs until
-Ctrl+C.
-
-Play manually while inspecting reward events:
-
-```powershell
-uv run koopapilot --mode human
-```
-
-Run only the metrics dashboard:
-
-```powershell
-uv run koopapilot --mode dashboard
-```
-
-Connect to emulator instances that are already running:
-
-```powershell
-uv run koopapilot --mode training --no-launch
-```
-
-Run training through the experimental RetroJet headless backend:
-
-```powershell
-uv run koopapilot --mode training --backend retrojet
-```
-
-Train through RetroJet while watching one live BizHawk demo instance:
-
-```powershell
-uv run koopapilot --mode live-demo
-```
-
-`live-demo` forces the RetroJet backend for training and starts one extra
-BizHawk instance at 100% speed. That viewer waits for `./models/model_best.zip`
-by default, then reloads it whenever the file changes, so you can see whether
-the current best model is improving without slowing the headless rollout
-collection. The viewer uses a separate socket range at `emulator.base_port +
-1000`; override it with `--live-demo-port` if needed.
-
-RetroJet is a separate native libretro/Snes9x batch runner intended for
-high-throughput headless rollout collection. It uses libretro-compatible
-savestates, not BizHawk `.State` files. BizHawk remains the recommended backend
-for visual debugging, overlays, human reward inspection, and evaluation.
-When `level_loading.mode` is `level_loading`, RetroJet can use the configured
-Lunar Magic level IDs through its native ROM-backed level-load path.
-
-For faster RetroJet training, add this section to `config.json`:
-
-```json
-"backend": {
-  "type": "retrojet",
-  "retrojet": {
-    "core_path": "../RetroJet/cores/snes9x2010_libretro.dll",
-    "rom_path": "../RetroJet/roms/Super Mario World.sfc",
-    "num_envs": 32,
-    "frame_skip": 4,
-    "boot_frames": 300,
-    "level_ids": ["0x105", "0x106"],
-    "savestate_paths": []
-  }
-}
-```
-
-With `backend.type` set to `retrojet`, this is enough:
-
-```powershell
-uv run koopapilot --mode training
-```
-
-Force BizHawk instead:
-
-```powershell
-uv run koopapilot --mode training --backend bizhawk
-```
-
-Use another configuration file:
-
-```powershell
-uv run koopapilot --mode training --config ./my_config.json
-```
-
-Show all CLI options:
-
-```powershell
-uv run koopapilot --help
-```
-
-The dashboard is available at [http://127.0.0.1:8080](http://127.0.0.1:8080) by default.
+Checkpoints require compatible observation and action spaces, frame stacking,
+and PPO rollout settings. The reset domain matters as well: a policy trained
+from a specific BizHawk `.State` may not transfer perfectly to RetroJet's
+ROM-backed full-level start. BizHawk and libretro savestate formats are not
+interchangeable.
 
 ## Configuration
 
@@ -350,7 +235,8 @@ All runtime settings live in `config.json`.
 | ----------------- | ------------------------------------------------------------------------------ |
 | `paths`           | Local BizHawk, ROM, Lua script, savestate, model, log, and video paths         |
 | `emulator`        | Instance count, socket ports, speed, frame skip, sound, and window layout      |
-| `backend`         | Optional backend selection: `bizhawk` or `retrojet`                            |
+| `backend`         | Backend selection plus settings unique to `bizhawk` or `retrojet`              |
+| `live_demo`       | Refresh interval for the temporary visible-viewer model mirror                 |
 | `flags`           | Tile, reward, and controller overlay visibility                                |
 | `level_loading`   | Savestate scanning, explicit state files, or Lunar Magic level IDs for warping |
 | `ram_addresses`   | WRAM addresses used as a readable reference for the integration                |
@@ -358,33 +244,37 @@ All runtime settings live in `config.json`.
 | `normalization`   | Screen dimensions, tile-grid size, and normalization constants                 |
 | `rewards`         | Reward weights, penalties, teleport threshold, and inactivity handling         |
 | `ppo`             | PPO hyperparameters, frame stack, checkpoints, and episode limits              |
+| `performance`     | Host-specific CPU runtime tuning                                                 |
 | `dashboard`       | Dashboard bind host, port, and refresh interval                                |
 
 Important variables:
 
 | Variable                       | Default   | Notes                                                     |
 | ------------------------------ | --------- | --------------------------------------------------------- |
+| `paths.rom`                    | `./roms/Super Mario World.sfc` | One ROM shared by BizHawk and RetroJet       |
 | `emulator.num_instances`       | `8`       | Number of parallel BizHawk processes                      |
-| `backend.type`                 | unset     | Use `retrojet` for headless libretro training             |
-| `backend.retrojet.num_envs`    | fallback  | Number of headless RetroJet environments                  |
-| `backend.retrojet.core_path`   | auto      | Prefer `../RetroJet/cores/snes9x2010_libretro.dll`        |
-| `backend.retrojet.frame_skip`  | fallback  | Frames repeated for each RetroJet action                  |
+| `emulator.frame_skip`          | `4`       | One shared action-repeat value for both backends          |
+| `backend.type`                 | `retrojet` | Default training backend; use `bizhawk` for Lua/socket training |
+| `backend.retrojet.num_envs`    | `16`      | Number of headless RetroJet environments                  |
+| `backend.retrojet.core_path`   | `../RetroJet/cores/snes9x2010_libretro.dll` | Libretro core used by RetroJet       |
+| `level_loading.levels`         | `["0x105"]` | One level list shared by both backends                  |
+| `live_demo.save_interval_steps` | `10000`  | How often a new immutable live-viewer model generation is published |
+| `performance.torch_threads`      | `4`      | Conservative PyTorch CPU worker limit                              |
+| `performance.retrojet_threads`   | `4`      | Hard limit for RetroJet's native Rayon worker pool                  |
 | `emulator.base_port`           | `9000`    | First TCP port; following instances use consecutive ports |
-| `--live-demo-port`             | `10000`   | First TCP port for the optional live-demo BizHawk viewer  |
 | `emulator.speed_percent`       | `6400`    | BizHawk speed during training                             |
 | demo speed                     | `100`     | Demo and live-demo BizHawk instances always run normally  |
-| `emulator.frame_skip`          | `4`       | Frames repeated for each selected action                  |
 | `normalization.grid_size`      | `21`      | Odd-sized tile grid centered around Mario                 |
 | `normalization.max_sprite_hitbox_dimension` | `128` | Scale reserved for normalized sprite footprint dimensions |
 | `ppo.frame_stack`              | `4`       | Consecutive observation frames exposed to PPO             |
 | `ppo.n_steps`                  | `128`     | Steps collected per emulator before each PPO update       |
-| `ppo.batch_size`               | `256`     | Minibatch size; four minibatches per update with 8 emulators |
+| `ppo.batch_size`               | `512`     | Minibatch size; four minibatches per default RetroJet rollout |
 | `ppo.gamma`                    | `0.99`    | Reward discount factor                                    |
 | `ppo.gae_lambda`               | `0.95`    | Bias-variance tradeoff for advantage estimation           |
 | `ppo.clip_range`               | `0.1`     | Linearly decaying PPO policy-update clip range             |
 | `ppo.ent_coef`                 | `0.01`    | Entropy bonus coefficient for exploration                 |
 | `ppo.target_kl`                | `0.03`    | Safety stop for unusually large PPO updates               |
-| `ppo.total_timesteps`          | `2500000` | Total training budget                                     |
+| `ppo.total_timesteps`          | `25000000` | Total training budget                                    |
 | `ppo.save_interval_steps`      | `100000`  | Checkpoint interval                                       |
 | `ppo.max_episode_steps`        | `1024`    | Hard episode limit                                        |
 | `ppo.stagnation_timeout_steps` | `300`     | Stop episodes that make no progress                       |
@@ -407,6 +297,10 @@ With the default `21 x 21` tile grid, one observation contains `562` values befo
 
 With the default four-frame stack, PPO receives `2248` values per environment step.
 
+Native sprite footprints replaced RetroJet's earlier fixed 16 x 16 boxes. The
+tensor shape is unchanged, but some values differ; re-evaluate checkpoints made
+with older RetroJet builds and retrain when strictly comparable results matter.
+
 ## Action Space
 
 The policy selects one of 12 discrete controller combinations. The action table covers idle, left/right running, jumps, spin jumps, ducking, door or climbing input, and releasing `Y`. Run is held by default so that movement stays responsive at training speed.
@@ -417,9 +311,9 @@ The reward calculator favors new level progress and successful exits while disco
 
 | Event                                    |    Default reward |
 | ---------------------------------------- | ----------------: |
-| New horizontal progress                  |  `+0.3` per pixel |
-| New vertical progress in vertical levels |  `+0.3` per pixel |
-| Newly explored tile cell                 |         `+0.25` |
+| New horizontal progress                  | `+0.25` per pixel |
+| New vertical progress in vertical levels |   `+10` per pixel |
+| Newly explored tile cell                 |              `+0` |
 | Goal reached                             |           `+1000` |
 | Coin collected                           |              `+0` |
 | Powerup upgrade                          |             `+20` |
@@ -427,27 +321,32 @@ The reward calculator favors new level progress and successful exits while disco
 | Pipe or door transition                  |             `+50` |
 | Enemy defeated                           |             `+10` |
 | Enemy stunned                            |             `+10` |
-| Death                                    |             `-30` |
+| Death                                    |            `-100` |
 | Powerup loss                             |             `-10` |
-| Time penalty                             |  `-0.05` per step |
+| Time penalty                             |  `-0.25` per step |
 
 Horizontal reward is granted only for new per-episode maximum X positions.
 Returning to previously visited ground therefore cannot farm reward. Large
 coordinate jumps are treated as teleports to prevent savestate loads and
 transitions from creating false progress rewards.
 
-Each coarse tile cell also grants a small episode-local exploration reward
-the first time Mario visits it. This makes necessary detours and climbs
-learnable without allowing repeated movement between known cells to farm
-reward. Newly explored cells reset the stagnation timeout as well.
+`exploration_new_cell` can optionally reward a coarse position once per
+episode. It is disabled by default; when enabled, new cells also reset the
+stagnation timeout without making back-and-forth movement farmable.
 
 ## Training Profile
 
-The default PPO profile uses short rollouts: `128` steps across each of the
-eight emulator instances, producing `1024` transitions per update. With a
-minibatch size of `256`, PPO trains on four minibatches for each of four
-epochs. This keeps policy updates frequent while preserving a useful amount
-of parallel experience.
+The default RetroJet profile uses `128` steps across 16 headless environments,
+producing `2048` transitions per update. With a minibatch size of `512`, PPO
+trains on four minibatches for each of four epochs. BizHawk keeps a smaller
+default of eight visible processes while using the same frame skip.
+
+Observation assembly uses a preallocated NumPy vector because it runs once per
+environment step. The two settings below `performance` independently cap PPO
+and RetroJet CPU parallelism. The conservative default of four workers each is
+intended for stable long-running training rather than maximum benchmark speed.
+Increase them only while monitoring CPU temperature and system stability.
+These limits do not change checkpoint shapes or observation values.
 
 Timeouts and maximum-step limits are treated as truncated episodes. Deaths
 and goals remain real terminal states. This distinction allows the value
@@ -458,7 +357,8 @@ configured time limit.
 
 Training runs write JSON metrics below `./logs/`. The Flask dashboard can:
 
-- display timesteps, episodes, rewards, and horizontal progress;
+- display timesteps, episodes, goal rate, rewards, and horizontal progress;
+- distinguish stochastic training rollouts from deterministic live-demo episodes;
 - plot reward, episode length, and episode maximum X over time;
 - load the latest run automatically;
 - inspect a previous run;

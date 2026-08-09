@@ -6,7 +6,7 @@ import signal
 import sys
 
 from stable_baselines3.common.vec_env import VecFrameStack
-from .agent import create_agent, CheckpointCallback
+from .agent import create_agent, CheckpointCallback, _save_model_atomic
 from .metrics import MetricsLogger
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 class TrainingManager:
     """Manages the PPO training loop with interrupt handling."""
 
-    def __init__(self, vec_env, config: dict, model_path: str = None):
+    def __init__(self, vec_env, config: dict, model_path: str = None,
+                 metrics_logger=None):
         # Apply frame stacking if configured
         frame_stack = config.get("ppo", {}).get("frame_stack", 1)
         if frame_stack > 1:
@@ -26,6 +27,7 @@ class TrainingManager:
         self.config = config
         self.model_path = model_path
         self.model = None
+        self.metrics_logger = metrics_logger
         self.interrupted = False
 
         self.save_dir = config["paths"].get("model_dir", "./models")
@@ -36,20 +38,32 @@ class TrainingManager:
         ppo_cfg = self.config.get("ppo", {})
         total_timesteps = ppo_cfg.get("total_timesteps", 10_000_000)
         save_interval = ppo_cfg.get("save_interval_steps", 50_000)
+        live_demo_cfg = self.config.get("live_demo", {})
+        live_model_path = live_demo_cfg.get("model_path")
+        live_save_interval = live_demo_cfg.get("save_interval_steps", 10_000)
 
         # Setup metrics
         log_dir = self.config["paths"].get("log_dir", "./logs")
         os.makedirs(log_dir, exist_ok=True)
-        metrics_logger = MetricsLogger(log_dir, self.config)
+        metrics_logger = self.metrics_logger or MetricsLogger(log_dir, self.config)
 
         # Create agent
         self.model = create_agent(self.vec_env, self.config, self.model_path)
+        if live_model_path:
+            published_path = _save_model_atomic(
+                self.model, live_model_path, timestep=0
+            )
+            logger.info(
+                f"Initial live demo model published: {published_path}"
+            )
 
         # Setup callback
         callback = CheckpointCallback(
             save_dir=self.save_dir,
             save_interval=save_interval,
             metrics_logger=metrics_logger,
+            live_model_path=live_model_path,
+            live_save_interval=live_save_interval,
         )
 
         # Setup interrupt handler

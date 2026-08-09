@@ -1,13 +1,20 @@
 """PPO agent wrapper using stable-baselines3."""
 
-import os
+import json
 import logging
+import os
+import tempfile
+import threading
+import time
+import uuid
+from pathlib import Path
 from typing import Optional
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.utils import FloatSchedule
 
 logger = logging.getLogger(__name__)
+LIVE_MODEL_IO_LOCK = threading.RLock()
 
 
 def linear_schedule(initial_value: float):
@@ -50,6 +57,11 @@ def create_agent(vec_env, config: dict, model_path: Optional[str] = None) -> PPO
                 "action space. Start a fresh run after changing observations "
                 "or controller actions."
             ) from exc
+        # Checkpoints retain the TensorBoard directory from their original
+        # machine. Always redirect new logs to the active configuration.
+        model.tensorboard_log = config.get("paths", {}).get(
+            "log_dir", "./logs"
+        )
         # Apply current config hyperparameters (important for finetuning)
         model.learning_rate = lr
         model.lr_schedule = FloatSchedule(lr)
@@ -107,17 +119,22 @@ class CheckpointCallback(BaseCallback):
     """Save model at regular intervals and track best reward."""
 
     def __init__(self, save_dir: str, save_interval: int,
-                 metrics_logger=None, verbose=1):
+                 metrics_logger=None, live_model_path: Optional[str] = None,
+                 live_save_interval: int = 10_000, verbose=1):
         super().__init__(verbose)
         self.save_dir = save_dir
         self.save_interval = save_interval  # In timesteps, not calls
         self.metrics_logger = metrics_logger
+        self.live_model_path = live_model_path
+        self.live_save_interval = max(1, int(live_save_interval))
         self.best_mean_reward = float("-inf")
         self.episode_rewards = []
         self.episode_lengths = []
         self.episode_max_x = []
+        self.episode_goals = []
         self.last_log_timestep = 0
         self.last_save_timestep = 0
+        self.last_live_save_timestep = 0
 
     def _on_step(self) -> bool:
         # Track episode info
@@ -126,6 +143,9 @@ class CheckpointCallback(BaseCallback):
                 self.episode_rewards.append(info["episode"]["r"])
                 self.episode_lengths.append(info["episode"]["l"])
                 self.episode_max_x.append(info["episode"].get("max_x", 0))
+                self.episode_goals.append(bool(
+                    info["episode"].get("goal_reached", False)
+                ))
 
         # Log metrics every 2048 global steps for live dashboard updates
         log_interval = 2048
@@ -139,6 +159,7 @@ class CheckpointCallback(BaseCallback):
                 mean_len = np.mean(self.episode_lengths[-50:])
                 mean_max_x = np.mean(self.episode_max_x[-50:])
                 max_x = np.max(self.episode_max_x[-50:])
+                goal_rate = np.mean(self.episode_goals[-50:])
                 
                 self.metrics_logger.log_iteration({
                     "timestep": self.num_timesteps,
@@ -148,10 +169,33 @@ class CheckpointCallback(BaseCallback):
                     "mean_length": float(mean_len),
                     "mean_max_x": float(mean_max_x),
                     "max_x": float(max_x),
+                    "goal_rate": float(goal_rate),
                     "episodes": len(self.episode_rewards),
                 })
-                
-
+        if (
+            self.live_model_path
+            and self.num_timesteps - self.last_live_save_timestep
+            >= self.live_save_interval
+        ):
+            self.last_live_save_timestep = self.num_timesteps
+            try:
+                published_path = _save_model_atomic(
+                    self.model,
+                    self.live_model_path,
+                    timestep=self.num_timesteps,
+                )
+                if self.verbose:
+                    logger.info(
+                        f"Published live demo model: {published_path}"
+                    )
+            except Exception as exc:
+                # The visible viewer is optional. A temporary Windows file
+                # lock, antivirus scan, or disk error must not kill training.
+                logger.warning(
+                    "Could not refresh live demo model; training continues "
+                    "with the previous viewer checkpoint: %s",
+                    exc,
+                )
 
         # Save model at intervals (based on timesteps, not calls)
         if self.num_timesteps - self.last_save_timestep >= self.save_interval:
@@ -176,3 +220,109 @@ class CheckpointCallback(BaseCallback):
                     )
 
         return True
+
+
+def _save_model_atomic(model, path: str, timestep: int | None = None):
+    """Publish a model without replacing a ZIP that Windows may be reading."""
+    with LIVE_MODEL_IO_LOCK:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        target_path = (
+            _generation_model_path(path, timestep)
+            if timestep is not None
+            else path
+        )
+        fd, temp_path = tempfile.mkstemp(
+            prefix=".model-live-",
+            suffix=".zip",
+            dir=os.path.dirname(path) or ".",
+        )
+        os.close(fd)
+        try:
+            model.save(temp_path)
+            _replace_with_retry(temp_path, target_path)
+            if timestep is not None:
+                _save_model_metadata_atomic(path, target_path, timestep)
+                _cleanup_model_generations(path)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        return target_path
+
+
+def _model_metadata_path(model_path: str) -> str:
+    path = os.path.abspath(model_path)
+    if path.lower().endswith(".zip"):
+        path = path[:-4]
+    return f"{path}.meta.json"
+
+
+def _save_model_metadata_atomic(
+    reference_path: str, model_path: str, timestep: int
+):
+    """Write metadata that can be verified against the completed model file."""
+    model_stat = os.stat(model_path)
+    metadata_path = _model_metadata_path(reference_path)
+    fd, temp_path = tempfile.mkstemp(
+        prefix=".model-live-meta-",
+        suffix=".json",
+        dir=os.path.dirname(metadata_path) or ".",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({
+                "timestep": int(timestep),
+                "model_file": os.path.basename(model_path),
+                "model_mtime_ns": model_stat.st_mtime_ns,
+                "model_size": model_stat.st_size,
+            }, handle, indent=2)
+        _replace_with_retry(temp_path, metadata_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+def _generation_model_path(reference_path: str, timestep: int) -> str:
+    """Return a new immutable filename for one live-model generation."""
+    path = Path(os.path.abspath(reference_path))
+    stem = path.name[:-4] if path.name.lower().endswith(".zip") else path.name
+    name = (
+        f"{stem}.generation-{int(timestep):012d}-"
+        f"{uuid.uuid4().hex[:8]}.zip"
+    )
+    return str(path.with_name(name))
+
+
+def _cleanup_model_generations(
+    reference_path: str, keep_latest: int = 4
+):
+    """Best-effort cleanup of superseded immutable live-model files."""
+    path = Path(os.path.abspath(reference_path))
+    stem = path.name[:-4] if path.name.lower().endswith(".zip") else path.name
+    candidates = sorted(
+        path.parent.glob(f"{stem}.generation-*.zip"),
+        key=lambda candidate: candidate.stat().st_mtime_ns,
+        reverse=True,
+    )
+    for candidate in candidates[max(0, keep_latest):]:
+        try:
+            candidate.unlink()
+        except OSError:
+            # A stale generation is harmless and will be retried next time.
+            pass
+
+
+def _replace_with_retry(
+    source: str,
+    destination: str,
+    attempts: int = 80,
+    delay_seconds: float = 0.025,
+):
+    """Replace a file, tolerating short-lived Windows reader locks."""
+    for attempt in range(attempts):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay_seconds)

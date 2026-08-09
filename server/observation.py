@@ -28,92 +28,113 @@ def build_observation(state: dict, config: dict) -> np.ndarray:
     grid_cells = grid_size * grid_size
     header_size = 2 + 2 + 4 + 4 + 1  # pos + vel + powerup + state + is_vertical = 13
 
-    obs = []
+    # This function runs once per environment and RL step.  Building a Python
+    # list and calling np.clip for every scalar used to dominate RetroJet
+    # rollout time.  Fill the final float32 vector directly instead; the
+    # observation layout and normalization stay exactly the same.
+    obs = np.zeros(header_size + grid_cells + 108, dtype=np.float32)
 
     # Mario screen position (normalized)
     mario_x = state.get("mario_x_screen", 128) / screen_w
     mario_y = state.get("mario_y_screen", 112) / screen_h
-    obs.extend([
-        np.clip(mario_x, 0.0, 1.0),
-        np.clip(mario_y, 0.0, 1.0)
-    ])
+    obs[0] = _clip(mario_x, 0.0, 1.0)
+    obs[1] = _clip(mario_y, 0.0, 1.0)
 
     # Mario velocity (signed, normalized to -1..1)
     mario_x_speed = state.get("mario_x_speed", 0) / 128.0
     mario_y_speed = state.get("mario_y_speed", 0) / 128.0
-    obs.extend([
-        np.clip(mario_x_speed, -1.0, 1.0),
-        np.clip(mario_y_speed, -1.0, 1.0)
-    ])
+    obs[2] = _clip(mario_x_speed, -1.0, 1.0)
+    obs[3] = _clip(mario_y_speed, -1.0, 1.0)
 
     # Powerup one-hot (4 categories: small=0, big=1, cape=2, fire=3)
     powerup = state.get("powerup", 0)
-    powerup_oh = [0.0, 0.0, 0.0, 0.0]
     if 0 <= powerup <= 3:
-        powerup_oh[powerup] = 1.0
-    obs.extend(powerup_oh)
+        obs[4 + powerup] = 1.0
 
     # State one-hot (ground, air, water, climbing)
     on_ground = state.get("on_ground", 0) != 0
-    in_air = state.get("in_air", 0) != 0
     in_water = state.get("in_water", 0) != 0
     climbing = state.get("climbing", 0) != 0
 
     if in_water:
-        state_oh = [0.0, 0.0, 1.0, 0.0]
+        state_index = 2
     elif climbing:
-        state_oh = [0.0, 0.0, 0.0, 1.0]
+        state_index = 3
     elif on_ground:
-        state_oh = [1.0, 0.0, 0.0, 0.0]
+        state_index = 0
     else:
-        state_oh = [0.0, 1.0, 0.0, 0.0]  # in air by default
-    obs.extend(state_oh)
+        state_index = 1  # in air by default
+    obs[8 + state_index] = 1.0
 
     # Level type
-    obs.append(1.0 if state.get("is_vertical", False) else 0.0)
+    obs[12] = 1.0 if state.get("is_vertical", False) else 0.0
 
     # Tile grid (grid_size x grid_size, normalized integer)
     tile_grid = state.get("tile_grid", [])
-    grid_values = [
-        cat
-        for row in tile_grid[:grid_size]
-        for cat in row[:grid_size]
-    ][:grid_cells]
-    for cat in grid_values:
-        obs.append(cat / (tile_cats - 1))
-    # Pad if grid is smaller than expected
-    while len(obs) < header_size + grid_cells:
-        obs.append(0.0)
+    grid_values = _flatten_grid(tile_grid, grid_size, grid_cells)
+    if grid_values.size:
+        count = min(grid_cells, grid_values.size)
+        obs[header_size:header_size + count] = (
+            grid_values[:count] / (tile_cats - 1)
+        )
 
     # Sprites: 12 slots x 9 values
     sprites = state.get("sprites", [])
+    sprites_start = header_size + grid_cells
     for i in range(12):
+        offset = sprites_start + i * 9
         if i < len(sprites):
             sp = sprites[i]
             active = float(sp.get("active", 0))
             if not active:
-                obs.extend([0.0] * 9)
                 continue
             sprite_id = sp.get("id", 0) / 255.0
-            sx = np.clip(sp.get("screen_x", 128) / screen_w, -0.5, 1.5)
-            sy = np.clip(sp.get("screen_y", 112) / screen_h, -0.5, 1.5)
-            speed_x = np.clip(sp.get("speed_x", 0) / 128.0, -1.0, 1.0)
-            speed_y = np.clip(sp.get("speed_y", 0) / 128.0, -1.0, 1.0)
-            hitbox_width = np.clip(
+            sx = _clip(sp.get("screen_x", 128) / screen_w, -0.5, 1.5)
+            sy = _clip(sp.get("screen_y", 112) / screen_h, -0.5, 1.5)
+            speed_x = _clip(sp.get("speed_x", 0) / 128.0, -1.0, 1.0)
+            speed_y = _clip(sp.get("speed_y", 0) / 128.0, -1.0, 1.0)
+            hitbox_width = _clip(
                 sp.get("hitbox_width", 16) / max_hitbox_dimension, 0.0, 1.0
             )
-            hitbox_height = np.clip(
+            hitbox_height = _clip(
                 sp.get("hitbox_height", 16) / max_hitbox_dimension, 0.0, 1.0
             )
             misc_state = sp.get("misc_state", 0) / 255.0
-            obs.extend([
+            obs[offset:offset + 9] = [
                 active, sprite_id, sx, sy, speed_x, speed_y,
                 hitbox_width, hitbox_height, misc_state,
-            ])
-        else:
-            obs.extend([0.0] * 9)
+            ]
 
-    return np.array(obs, dtype=np.float32)
+    return obs
+
+
+def _clip(value: float, low: float, high: float) -> float:
+    """Fast scalar clipping for values read from emulator state."""
+    return min(high, max(low, value))
+
+
+def _flatten_grid(
+    tile_grid: list, grid_size: int, grid_cells: int
+) -> np.ndarray:
+    """Flatten a possibly short or ragged grid with the legacy row order."""
+    rows = tile_grid[:grid_size]
+    if len(rows) == 0:
+        return np.empty(0, dtype=np.float32)
+    try:
+        grid = np.asarray(rows, dtype=np.float32)
+        if grid.ndim == 2:
+            return grid[:, :grid_size].reshape(-1)[:grid_cells]
+    except (TypeError, ValueError):
+        pass
+    return np.fromiter(
+        (
+            category
+            for row in rows
+            for category in row[:grid_size]
+        ),
+        dtype=np.float32,
+        count=-1,
+    )[:grid_cells]
 
 
 def get_observation_size(config: dict = None) -> int:

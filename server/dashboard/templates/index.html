@@ -39,6 +39,11 @@
         font-size: 20px;
         color: #e94560;
       }
+      .header-title p {
+        margin-top: 4px;
+        color: #9aa4bd;
+        font-size: 12px;
+      }
       .header .controls {
         display: flex;
         gap: 12px;
@@ -210,7 +215,10 @@
   </head>
   <body>
     <div class="header">
-      <h1>KoopaPilot - Training Dashboard</h1>
+      <div class="header-title">
+        <h1>KoopaPilot - Training Dashboard</h1>
+        <p>Training rollouts are stochastic; live-demo evaluations are deterministic.</p>
+      </div>
       <div class="controls">
         <select
           id="runSelect"
@@ -271,7 +279,7 @@
         </div>
       </div>
       <div class="stat-box">
-        <div class="label">Mean Reward</div>
+        <div class="label">Train Mean Reward</div>
         <div
           class="value"
           id="statMeanReward"
@@ -280,10 +288,37 @@
         </div>
       </div>
       <div class="stat-box">
-        <div class="label">Best Reward</div>
+        <div class="label">Train Best Reward</div>
         <div
           class="value"
           id="statBestReward"
+        >
+          -
+        </div>
+      </div>
+      <div class="stat-box">
+        <div class="label">Train Goal Rate</div>
+        <div
+          class="value"
+          id="statGoalRate"
+        >
+          -
+        </div>
+      </div>
+      <div class="stat-box">
+        <div class="label">Latest Viewer Reward</div>
+        <div
+          class="value"
+          id="statViewerReward"
+        >
+          -
+        </div>
+      </div>
+      <div class="stat-box">
+        <div class="label">Viewer Goal</div>
+        <div
+          class="value"
+          id="statViewerGoal"
         >
           -
         </div>
@@ -310,7 +345,7 @@
 
     <div class="dashboard">
       <div class="card full">
-        <h2>Reward Over Time</h2>
+        <h2>Stochastic Training vs. Deterministic Viewer Reward</h2>
         <div
           class="compare-list"
           id="compareList"

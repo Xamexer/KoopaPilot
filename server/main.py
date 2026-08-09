@@ -34,7 +34,10 @@ def main():
         "--backend",
         choices=["bizhawk", "retrojet"],
         default=None,
-        help="Training backend (default: config backend.type or bizhawk)",
+        help=(
+            "Training backend override; live-demo always uses RetroJet and "
+            "visible demo/evaluation/human modes use BizHawk"
+        ),
     )
     parser.add_argument(
         "--no-launch", action="store_true",
@@ -64,9 +67,12 @@ def main():
 
     # Load config
     from .config import load_config
-    config = load_config(args.config)
+    backend_override = _backend_override_for_mode(args.mode, args.backend)
+    config = load_config(args.config, backend=backend_override)
     config["_mode"] = args.mode
-    backend = args.backend or config.get("backend", {}).get("type", "bizhawk")
+    backend = backend_override or config.get("backend", {}).get(
+        "type", "bizhawk"
+    )
     config["_backend"] = backend
     if args.vis:
         config.setdefault("flags", {})["visibility"] = True
@@ -76,6 +82,8 @@ def main():
         from .dashboard.app import run_dashboard
         run_dashboard(config)
         return
+
+    _configure_runtime(config)
 
     # Start dashboard in background
     dash_thread = threading.Thread(
@@ -179,14 +187,17 @@ def _run_training_mode(config, args):
             emu_manager.close_all()
 
 
-def _run_retrojet_training_mode(config, args):
+def _run_retrojet_training_mode(config, args, metrics_logger=None):
     """Run training mode through RetroJet instead of BizHawk."""
+    logger.info("Loading RetroJet and PPO training stack...")
     from .retrojet_backend import create_retrojet_vec_env
     from .training import TrainingManager
 
     vec_env = create_retrojet_vec_env(config)
     try:
-        trainer = TrainingManager(vec_env, config, args.model)
+        trainer = TrainingManager(
+            vec_env, config, args.model, metrics_logger=metrics_logger
+        )
         trainer.train()
     finally:
         vec_env.close()
@@ -210,21 +221,32 @@ def _run_demo_mode(config, args):
 
 def _run_live_demo_mode(config, args):
     """Run RetroJet training while a visible BizHawk instance plays the model."""
-    from .demo import run_demo_mode
-
     config["_backend"] = "retrojet"
     config.setdefault("backend", {})["type"] = "retrojet"
 
-    model_path = args.model or os.path.join(
-        config["paths"].get("model_dir", "./models"), "model_best.zip"
-    )
+    model_dir = config["paths"].get("model_dir", "./models")
+    model_path = _live_model_path(model_dir, args.model)
+    from .agent import _cleanup_model_generations, _model_metadata_path
+
+    for stale_path in (model_path, _model_metadata_path(model_path)):
+        if os.path.exists(stale_path):
+            os.remove(stale_path)
+    _cleanup_model_generations(model_path, keep_latest=0)
+    live_demo_cfg = config.setdefault("live_demo", {})
+    live_demo_cfg["model_path"] = model_path
+    live_demo_cfg.setdefault("save_interval_steps", 10_000)
+
+    from .metrics import MetricsLogger
+
+    log_dir = config["paths"].get("log_dir", "./logs")
+    metrics_logger = MetricsLogger(log_dir, config)
     live_base_port = args.live_demo_port
     if live_base_port is None:
         live_base_port = int(config["emulator"].get("base_port", 9000)) + 1000
 
     stop_event = threading.Event()
     demo_thread = threading.Thread(
-        target=run_demo_mode,
+        target=_run_live_demo_thread,
         kwargs={
             "config": config,
             "model_path": model_path,
@@ -235,22 +257,82 @@ def _run_live_demo_mode(config, args):
             "reload_on_change": True,
             "wait_for_model": True,
             "stop_event": stop_event,
+            "episode_callback": metrics_logger.log_evaluation,
         },
         daemon=True,
         name="live-demo",
     )
 
     logger.info(
-        "Starting live demo on port %s with model %s",
+        "Starting deterministic live viewer on port %s with mirror reference %s",
         live_base_port,
         model_path,
     )
+    logger.info(
+        "Dashboard training rewards use stochastic PPO rollouts; live viewer "
+        "episodes are recorded separately as deterministic evaluations."
+    )
     demo_thread.start()
     try:
-        _run_retrojet_training_mode(config, args)
+        _run_retrojet_training_mode(
+            config, args, metrics_logger=metrics_logger
+        )
     finally:
         stop_event.set()
         demo_thread.join(timeout=5)
+
+
+def _live_model_path(model_dir: str, resume_path: str | None) -> str:
+    """Choose a writable viewer mirror that never aliases the resume source."""
+    live_path = os.path.join(model_dir, "model_live.zip")
+    if resume_path and _canonical_model_zip_path(resume_path) == (
+        _canonical_model_zip_path(live_path)
+    ):
+        return os.path.join(model_dir, "model_live_viewer.zip")
+    return live_path
+
+
+def _canonical_model_zip_path(path: str) -> str:
+    """Normalize an SB3 model path, including its implicit .zip suffix."""
+    normalized = os.path.abspath(os.path.expanduser(path))
+    if not normalized.lower().endswith(".zip"):
+        normalized = f"{normalized}.zip"
+    return os.path.normcase(os.path.realpath(normalized))
+
+
+def _backend_override_for_mode(
+    mode: str, requested_backend: str | None
+) -> str | None:
+    """Return the backend actually used by a mode before config validation."""
+    if mode == "live-demo":
+        return "retrojet"
+    if mode in {"demo", "evaluation", "human"}:
+        return "bizhawk"
+    if mode == "training":
+        return requested_backend
+    return None
+
+
+def _configure_runtime(config: dict):
+    """Apply CPU settings before PPO creates its first tensor operation."""
+    torch_threads = config.get("performance", {}).get("torch_threads")
+    if torch_threads is None:
+        return
+
+    import torch
+
+    torch.set_num_threads(int(torch_threads))
+    logger.info("PyTorch CPU threads: %s", torch.get_num_threads())
+
+
+def _run_live_demo_thread(**kwargs):
+    """Import and run the visible BizHawk demo inside its own thread."""
+    try:
+        from .demo import run_demo_mode
+
+        run_demo_mode(**kwargs)
+    except Exception as exc:
+        logger.error("Live demo stopped: %s", exc)
 
 
 def _run_evaluation_mode(config, args):

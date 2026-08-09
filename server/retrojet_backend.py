@@ -59,7 +59,7 @@ class RetroJetVecEnv(VecEnv):
         if self._actions is None:
             raise RuntimeError("step_async must be called before step_wait")
 
-        raw_states = self.runner.step([int(a) for a in self._actions])
+        raw_states = self.runner.step(self._actions.tolist())
         reset_indices = []
 
         for idx, state in enumerate(raw_states):
@@ -113,7 +113,14 @@ class RetroJetVecEnv(VecEnv):
         )
 
     def close(self):
-        pass
+        # Releasing the native Runner immediately unloads every copied
+        # libretro DLL and frees its per-environment state.  Relying on cyclic
+        # Python garbage collection can otherwise retain dozens of cores after
+        # repeated training/benchmark runs.
+        runner, self.runner = self.runner, None
+        close = getattr(runner, "close", None)
+        if callable(close):
+            close()
 
     def env_is_wrapped(self, wrapper_class, indices=None):
         return [False] * self.num_envs
@@ -157,8 +164,9 @@ def _create_runner(config: dict):
     except ImportError as exc:
         raise RuntimeError(
             "RetroJet backend requested, but the retrojet package is not "
-            "installed. From D:\\Hobby\\Programmieren\\RetroJet run: "
-            "uv run maturin develop --release"
+            "installed. Build the sibling ../RetroJet repository with "
+            "`uv run maturin develop --release`, then install it into this "
+            "environment."
         ) from exc
 
     retro_cfg = _retrojet_config(config)
@@ -170,27 +178,38 @@ def _create_runner(config: dict):
             config.get("emulator", {}).get("num_instances", 1),
         )
     )
-    frame_skip = int(
-        retro_cfg.get(
-            "frame_skip",
-            config.get("emulator", {}).get("frame_skip", 4),
-        )
-    )
+    frame_skip = int(config.get("emulator", {}).get(
+        "frame_skip", retro_cfg.get("frame_skip", 4)
+    ))
     grid_size = int(config.get("normalization", {}).get("grid_size", 21))
     boot_frames = int(retro_cfg.get("boot_frames", 300))
+    num_threads = int(config.get("performance", {}).get(
+        "retrojet_threads", 0
+    ))
     savestate_paths = [str(Path(path)) for path in retro_cfg.get("savestate_paths", [])]
-    level_ids = retro_cfg.get("level_ids")
-    if level_ids is None and config.get("level_loading", {}).get("mode") == "level_loading":
-        level_ids = get_level_ids(config)
-    level_ids = [int(level_id, 0) if isinstance(level_id, str) else int(level_id)
-                 for level_id in (level_ids or [])]
+    level_loading = config.get("level_loading", {})
+    if "levels" in level_loading:
+        level_ids = (
+            get_level_ids(config)
+            if level_loading.get("mode") == "level_loading"
+            else []
+        )
+    else:
+        # Compatibility for configs created before shared level settings were
+        # canonical. Validation emits a deprecation warning for this path.
+        level_ids = [
+            int(level_id, 16) if isinstance(level_id, str) else int(level_id)
+            for level_id in retro_cfg.get("level_ids", [])
+        ]
 
     logger.info(
-        "Starting RetroJet backend: core=%s rom=%s envs=%s frame_skip=%s",
+        "Starting RetroJet backend: core=%s rom=%s envs=%s "
+        "frame_skip=%s threads=%s",
         core_path,
         rom_path,
         num_envs,
         frame_skip,
+        num_threads or "auto",
     )
     return retrojet.Runner(
         core_path=core_path,
@@ -201,6 +220,7 @@ def _create_runner(config: dict):
         grid_size=grid_size,
         boot_frames=boot_frames,
         level_ids=level_ids,
+        num_threads=num_threads,
     )
 
 
@@ -222,15 +242,16 @@ def _default_core_path(config: dict, retro_cfg: dict) -> Path:
 
 
 def _default_rom_path(config: dict, retro_cfg: dict) -> Path:
-    if retro_cfg.get("rom_path"):
-        return Path(retro_cfg["rom_path"])
     if config.get("paths", {}).get("rom"):
         return Path(config["paths"]["rom"])
+    if retro_cfg.get("rom_path"):
+        return Path(retro_cfg["rom_path"])
     root = Path(__file__).resolve().parents[2]
     return root / "RetroJet" / "roms" / "Super Mario World.sfc"
 
 
 def _prepare_state(state: dict, step: int) -> dict:
-    prepared = dict(state)
-    prepared["step"] = step
-    return prepared
+    # RetroJet returns a fresh Python dict on every decode, so adding the
+    # episode counter in place avoids cloning the whole state for every env.
+    state["step"] = step
+    return state
