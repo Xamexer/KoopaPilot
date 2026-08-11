@@ -186,8 +186,8 @@ def _create_runner(config: dict):
     num_threads = int(config.get("performance", {}).get(
         "retrojet_threads", 0
     ))
-    savestate_paths = [str(Path(path)) for path in retro_cfg.get("savestate_paths", [])]
     level_loading = config.get("level_loading", {})
+    savestate_paths = _savestate_paths(config, retro_cfg)
     if "levels" in level_loading:
         level_ids = (
             get_level_ids(config)
@@ -202,26 +202,83 @@ def _create_runner(config: dict):
             for level_id in retro_cfg.get("level_ids", [])
         ]
 
+    _validate_retrojet_paths(core_path, rom_path, savestate_paths)
+
     logger.info(
         "Starting RetroJet backend: core=%s rom=%s envs=%s "
-        "frame_skip=%s threads=%s",
+        "frame_skip=%s threads=%s savestates=%s levels=%s",
         core_path,
         rom_path,
         num_envs,
         frame_skip,
         num_threads or "auto",
+        len(savestate_paths),
+        len(level_ids),
     )
-    return retrojet.Runner(
-        core_path=core_path,
-        rom_path=rom_path,
-        num_envs=num_envs,
-        frame_skip=frame_skip,
-        savestate_paths=savestate_paths,
-        grid_size=grid_size,
-        boot_frames=boot_frames,
-        level_ids=level_ids,
-        num_threads=num_threads,
-    )
+    try:
+        return retrojet.Runner(
+            core_path=core_path,
+            rom_path=rom_path,
+            num_envs=num_envs,
+            frame_skip=frame_skip,
+            savestate_paths=savestate_paths,
+            grid_size=grid_size,
+            boot_frames=boot_frames,
+            level_ids=level_ids,
+            num_threads=num_threads,
+        )
+    except RuntimeError as exc:
+        raise RuntimeError(
+            "RetroJet failed while initializing the native libretro runner. "
+            "All configured core/ROM/savestate paths exist, so if the nested "
+            "error is still 'failed to initialize env 0', the remaining fault "
+            "is inside RetroJet or the selected libretro core rather than "
+            "KoopaPilot's VecEnv/PPO code. "
+            f"core={core_path!r}, rom={rom_path!r}, "
+            f"savestates={len(savestate_paths)}, levels={len(level_ids)}, "
+            f"envs={num_envs}. Original error: {exc}"
+        ) from exc
+
+
+def _savestate_paths(config: dict, retro_cfg: dict) -> list[str]:
+    """Return canonical savestate paths, with legacy RetroJet fallback."""
+    level_loading = config.get("level_loading", {})
+    raw_paths = level_loading.get("savestate_files")
+    if raw_paths is None:
+        raw_paths = retro_cfg.get("savestate_paths", [])
+
+    if isinstance(raw_paths, (str, Path)):
+        raw_paths = [raw_paths]
+
+    paths = []
+    for path in raw_paths or []:
+        if not isinstance(path, (str, Path)):
+            raise TypeError(
+                "Savestate paths must be strings or pathlib.Path objects; "
+                f"got {type(path).__name__}: {path!r}"
+            )
+        paths.append(str(Path(path).expanduser().resolve()))
+    return paths
+
+
+def _validate_retrojet_paths(
+    core_path: str, rom_path: str, savestate_paths: list[str]
+) -> None:
+    """Fail before native initialization when an input file is missing."""
+    missing = []
+    for label, path in (("core", core_path), ("ROM", rom_path)):
+        if not Path(path).is_file():
+            missing.append(f"{label}: {path}")
+
+    for index, path in enumerate(savestate_paths):
+        if not Path(path).is_file():
+            missing.append(f"savestate[{index}]: {path}")
+
+    if missing:
+        raise FileNotFoundError(
+            "RetroJet cannot start because required input files are missing:\n  - "
+            + "\n  - ".join(missing)
+        )
 
 
 def _retrojet_config(config: dict) -> dict:

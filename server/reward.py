@@ -128,7 +128,7 @@ def compute_reward(state: dict, tracker: EpisodeTracker,
         done = True
         tracker.goal_reached = True
         tracker.total_reward += reward
-        logger.info(
+        logger.debug(
             "Goal detected: player_anim=0x%02X, goal_flag=%s, reward=%s",
             player_anim, goal_flag, reward,
         )

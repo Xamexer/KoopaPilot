@@ -8,6 +8,7 @@ from flask import Flask, render_template, jsonify
 from ..metrics import MetricsLogger
 
 logger = logging.getLogger(__name__)
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 
 def create_app(log_dir: str, poll_interval_seconds: float = 5) -> Flask:

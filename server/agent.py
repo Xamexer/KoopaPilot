@@ -27,6 +27,7 @@ def linear_schedule(initial_value: float):
 def create_agent(vec_env, config: dict, model_path: Optional[str] = None) -> PPO:
     """Create or load a PPO agent."""
     ppo_cfg = config.get("ppo", {})
+    console_verbose = int(ppo_cfg.get("verbose", 0))
     policy_kwargs = ppo_cfg.get("policy_kwargs", {"net_arch": [256, 256]})
 
     # Convert net_arch dict format for SB3 (pi/vf separate networks)
@@ -62,6 +63,7 @@ def create_agent(vec_env, config: dict, model_path: Optional[str] = None) -> PPO
         model.tensorboard_log = config.get("paths", {}).get(
             "log_dir", "./logs"
         )
+        model.verbose = console_verbose
         # Apply current config hyperparameters (important for finetuning)
         model.learning_rate = lr
         model.lr_schedule = FloatSchedule(lr)
@@ -107,7 +109,7 @@ def create_agent(vec_env, config: dict, model_path: Optional[str] = None) -> PPO
         max_grad_norm=ppo_cfg.get("max_grad_norm", 0.5),
         target_kl=ppo_cfg.get("target_kl"),
         policy_kwargs=policy_kwargs,
-        verbose=1,
+        verbose=console_verbose,
         tensorboard_log=config["paths"].get("log_dir", "./logs"),
     )
 
@@ -120,7 +122,7 @@ class CheckpointCallback(BaseCallback):
 
     def __init__(self, save_dir: str, save_interval: int,
                  metrics_logger=None, live_model_path: Optional[str] = None,
-                 live_save_interval: int = 10_000, verbose=1):
+                 live_save_interval: int = 10_000, verbose=0):
         super().__init__(verbose)
         self.save_dir = save_dir
         self.save_interval = save_interval  # In timesteps, not calls

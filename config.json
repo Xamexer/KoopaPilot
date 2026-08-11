@@ -156,6 +156,7 @@
   },
 
   "ppo": {
+    "verbose": 0,
     "learning_rate": 2.5e-4,
     "lr_schedule": "linear",
     "n_steps": 128,

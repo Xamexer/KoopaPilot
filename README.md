@@ -267,6 +267,7 @@ Important variables:
 | `normalization.grid_size`      | `21`      | Odd-sized tile grid centered around Mario                 |
 | `normalization.max_sprite_hitbox_dimension` | `128` | Scale reserved for normalized sprite footprint dimensions |
 | `ppo.frame_stack`              | `4`       | Consecutive observation frames exposed to PPO             |
+| `ppo.verbose`                  | `0`       | Keep PPO rollout tables out of the console                 |
 | `ppo.n_steps`                  | `128`     | Steps collected per emulator before each PPO update       |
 | `ppo.batch_size`               | `512`     | Minibatch size; four minibatches per default RetroJet rollout |
 | `ppo.gamma`                    | `0.99`    | Reward discount factor                                    |
@@ -388,7 +389,6 @@ Training runs write JSON metrics below `./logs/`. The Flask dashboard can:
 |   |-- emulator_manager.py
 |   |-- metrics.py
 |   `-- dashboard/
-|-- tests/
 |-- docs/images/
 |-- models/       # local checkpoints, ignored by Git
 |-- logs/         # local training metrics, ignored by Git
