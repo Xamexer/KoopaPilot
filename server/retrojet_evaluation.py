@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .environment import DISCRETE_ACTIONS
+from .games.smw.actions import DISCRETE_ACTIONS
 from .observation import build_observation
 
 logger = logging.getLogger(__name__)

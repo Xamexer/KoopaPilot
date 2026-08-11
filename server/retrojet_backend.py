@@ -10,8 +10,9 @@ import numpy as np
 from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 
-from .environment import DISCRETE_ACTIONS
 from .config import get_level_ids
+from .games.smw.actions import DISCRETE_ACTIONS
+from .games.smw.retrojet_runner import SMWRetroJetRunner
 from .observation import build_observation, get_observation_size
 from .reward import EpisodeTracker, compute_reward, init_tracker_from_state
 
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class RetroJetVecEnv(VecEnv):
-    """Stable-Baselines3 VecEnv backed by RetroJet's native batch runner."""
+    """SB3 VecEnv backed by a generic RetroJet Session and KoopaPilot SMW adapter."""
 
     def __init__(self, config: dict, runner=None):
         self.config = config
@@ -116,7 +117,7 @@ class RetroJetVecEnv(VecEnv):
         )
 
     def close(self):
-        # Releasing the native Runner immediately unloads every copied
+        # Releasing the native Session immediately unloads every copied
         # libretro DLL and frees its per-environment state.  Relying on cyclic
         # Python garbage collection can otherwise retain dozens of cores after
         # repeated training/benchmark runs.
@@ -184,7 +185,6 @@ def _create_runner(config: dict):
     frame_skip = int(config.get("emulator", {}).get(
         "frame_skip", retro_cfg.get("frame_skip", 4)
     ))
-    grid_size = int(config.get("normalization", {}).get("grid_size", 21))
     boot_frames = int(retro_cfg.get("boot_frames", 300))
     num_threads = int(config.get("performance", {}).get(
         "retrojet_threads", 0
@@ -219,20 +219,25 @@ def _create_runner(config: dict):
         len(level_ids),
     )
     try:
-        return retrojet.Runner(
+        session = retrojet.Session(
             core_path=core_path,
-            rom_path=rom_path,
+            content_path=rom_path,
             num_envs=num_envs,
             frame_skip=frame_skip,
-            savestate_paths=savestate_paths,
-            grid_size=grid_size,
             boot_frames=boot_frames,
-            level_ids=level_ids,
             num_threads=num_threads,
+        )
+        return SMWRetroJetRunner(
+            session=session,
+            memory_plan_type=retrojet.MemoryPlan,
+            config=config,
+            savestate_paths=savestate_paths,
+            level_ids=level_ids,
         )
     except RuntimeError as exc:
         raise RuntimeError(
-            "RetroJet failed while initializing the native libretro runner. "
+            "RetroJet failed while initializing the generic libretro session "
+            "or KoopaPilot's SMW adapter. "
             "All configured core/ROM/savestate paths exist, so if the nested "
             "error is still 'failed to initialize env 0', the remaining fault "
             "is inside RetroJet or the selected libretro core rather than "

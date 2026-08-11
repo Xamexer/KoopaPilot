@@ -42,12 +42,14 @@ This repository is the result. It can connect one or more BizHawk emulator insta
 ## Architecture
 
 <p align="center">
-  <img src="docs/images/architecture.png" alt="KoopaPilot architecture with BizHawk and RetroJet backends, live-demo model mirroring, and dashboard metrics" width="900">
+  <img src="docs/images/architecture.png" alt="KoopaPilot SMW application layer above its BizHawk adapter and the separate game-neutral RetroJet engine" width="900">
 </p>
 
-BizHawk and RetroJet implement the same environment contract: normalized
-observations, 12 controller actions, and shared reward logic. BizHawk favors
-visibility and debugging; RetroJet favors high-throughput headless training.
+KoopaPilot's BizHawk and RetroJet adapters implement the same environment
+contract: normalized observations, 12 controller actions, and shared reward
+logic. BizHawk favors visibility and debugging; the game-neutral RetroJet
+engine supplies high-throughput headless emulation beneath KoopaPilot's SMW
+adapter.
 
 ## Requirements
 
@@ -134,11 +136,15 @@ uv pip install -e ../RetroJet
 KoopaPilot uses the single ROM configured by `paths.rom` for both backends;
 the default remains `./roms/Super Mario World.sfc`.
 
+RetroJet itself is game-neutral. KoopaPilot owns the SMW action table, WRAM
+capture plan, state decoder, level initialization, observations, and rewards;
+the native engine receives only raw controller masks and memory ranges.
+
 Quick RetroJet benchmark:
 
 ```powershell
 cd ../RetroJet
-uv run retrojet-benchmark --core ./cores/snes9x2010_libretro.dll --rom "../KoopaPilot/roms/Super Mario World.sfc" --envs 16 --threads 4 --frames 1200 --frame-skip 4 --level 0x105
+uv run retrojet-benchmark --core ./cores/snes9x2010_libretro.dll --content "../KoopaPilot/roms/Super Mario World.sfc" --envs 16 --threads 4 --frames 1200 --frame-skip 4
 ```
 
 Run the benchmark on your own machine to choose a suitable `num_envs` value.
@@ -153,7 +159,9 @@ Savestates make episode resets reliable and allow training on selected levels.
 4. Copy the resulting `.State` file into `./savestates/`.
 5. Repeat this for each training start you want to sample.
 
-When `level_loading.savestate_files` is empty, the server automatically scans the top level of `./savestates/`.
+When `level_loading.savestate_files` is empty, the BizHawk backend scans the
+top level of `./savestates/`. RetroJet only loads paths listed explicitly; a
+non-empty list takes priority over `level_loading.levels`.
 
 For full ROM-backed resets instead of savestates, use quoted hexadecimal
 Lunar Magic level IDs:
@@ -220,7 +228,7 @@ Important variables:
 | `backend.type`                 | `retrojet` | Default training backend; use `bizhawk` for Lua/socket training |
 | `backend.retrojet.num_envs`    | `16`      | Number of headless RetroJet environments                  |
 | `backend.retrojet.core_path`   | `../RetroJet/cores/snes9x2010_libretro.dll` | Libretro core used by RetroJet       |
-| `level_loading.levels`         | `["0x105"]` | One level list shared by both backends                  |
+| `level_loading.levels`         | `["0x105", "0x106"]` | One level list shared by both backends         |
 | `live_demo.save_interval_steps` | `10000`  | How often a new immutable live-viewer model generation is published |
 | `performance.torch_threads`      | `4`      | Conservative PyTorch CPU worker limit                              |
 | `performance.retrojet_threads`   | `4`      | Hard limit for RetroJet's native Rayon worker pool                  |
@@ -243,7 +251,10 @@ Important variables:
 | `ppo.max_episode_steps`        | `1024`    | Hard episode limit                                        |
 | `ppo.stagnation_timeout_steps` | `300`     | Stop episodes that make no progress                       |
 
-The Lua integration contains the active Map16 classification logic. If tile categories are extended or remapped, keep `config.json` and `lua/smw_agent.lua` aligned.
+The BizHawk Lua integration and KoopaPilot's RetroJet SMW decoder contain the
+active Map16 classification logic. If tile categories are extended or
+remapped, keep `config.json`, `lua/smw_agent.lua`, and
+`server/games/smw/memory.py` aligned.
 
 ## Observation Space
 
@@ -276,7 +287,7 @@ The reward calculator favors new level progress and successful exits while disco
 | Event                                    |    Default reward |
 | ---------------------------------------- | ----------------: |
 | New horizontal progress                  | `+0.25` per pixel |
-| New vertical progress in vertical levels |   `+10` per pixel |
+| New vertical progress in vertical levels |  `+0.1` per pixel |
 | Newly explored tile cell                 |              `+0` |
 | Goal reached                             |           `+1000` |
 | Coin collected                           |              `+0` |
@@ -341,6 +352,11 @@ Training runs write JSON metrics below `./logs/`. The Flask dashboard can:
 |   |-- main.py
 |   |-- demo.py
 |   |-- environment.py
+|   |-- games/
+|   |   `-- smw/
+|   |       |-- actions.py
+|   |       |-- memory.py
+|   |       `-- retrojet_runner.py
 |   |-- vec_env.py
 |   |-- socket_server.py
 |   |-- retrojet_backend.py

@@ -12,7 +12,8 @@ import numpy as np
 
 from .demo import _demo_config, _wait_for_connections
 from .emulator_manager import EmulatorManager
-from .environment import DISCRETE_ACTIONS, SMWEnvironment
+from .environment import SMWEnvironment
+from .games.smw.actions import DISCRETE_ACTIONS
 from .evaluation import compile_video
 from .observation import build_observation
 from .retrojet_evaluation import (

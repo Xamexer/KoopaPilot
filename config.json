@@ -27,8 +27,7 @@
     "retrojet": {
       "core_path": "../RetroJet/cores/snes9x2010_libretro.dll",
       "num_envs": 16,
-      "boot_frames": 300,
-      "savestate_paths": []
+      "boot_frames": 300
     }
   },
 

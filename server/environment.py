@@ -6,27 +6,11 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
+from .games.smw.actions import DISCRETE_ACTIONS
 from .observation import build_observation, get_observation_size
 from .reward import EpisodeTracker, compute_reward, init_tracker_from_state
 
 logger = logging.getLogger(__name__)
-
-# Discrete action table: each entry is [Right, Left, Up, Down, A, B, ReleaseY]
-# Y (run) is ALWAYS held. ReleaseY=1 releases it (for fireballs).
-DISCRETE_ACTIONS = [
-    [0, 0, 0, 0, 0, 0, 0],  # 0: NOOP (hold Y = run in place)
-    [1, 0, 0, 0, 0, 0, 0],  # 1: Right (run right)
-    [1, 0, 0, 0, 0, 1, 0],  # 2: Right + B (run jump right)
-    [1, 0, 0, 0, 1, 0, 0],  # 3: Right + A (run spin jump right)
-    [0, 1, 0, 0, 0, 0, 0],  # 4: Left (run left)
-    [0, 1, 0, 0, 0, 1, 0],  # 5: Left + B (run jump left)
-    [0, 1, 0, 0, 1, 0, 0],  # 6: Left + A (run spin jump left)
-    [0, 0, 0, 0, 0, 1, 0],  # 7: B (run jump in place)
-    [0, 0, 0, 0, 1, 0, 0],  # 8: A (run spin jump in place)
-    [0, 0, 0, 1, 0, 0, 0],  # 9: Down (duck / enter pipe)
-    [0, 0, 1, 0, 0, 0, 0],  # 10: Up (enter door / climb)
-    [0, 0, 0, 0, 0, 0, 1],  # 11: Release Y (throw fireball)
-]
 
 NO_OP_RESPONSE = {
     "type": "action",
