@@ -48,8 +48,6 @@ This repository is the result. It can connect one or more BizHawk emulator insta
 BizHawk and RetroJet implement the same environment contract: normalized
 observations, 12 controller actions, and shared reward logic. BizHawk favors
 visibility and debugging; RetroJet favors high-throughput headless training.
-The diagram can be regenerated with
-`uv run python ./docs/generate_architecture_diagram.py`.
 
 ## Requirements
 
