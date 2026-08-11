@@ -1,4 +1,4 @@
-"""Deterministic RetroJet playback with live video and parity traces."""
+"""Deterministic RetroJet playback with MP4 and parity traces."""
 
 from __future__ import annotations
 
@@ -47,7 +47,6 @@ def run_retrojet_evaluation(
     model_path: str | None,
     episodes: int = 3,
     level_id: int | None = None,
-    show_window: bool = True,
     realtime: bool = True,
     output_dir: str | None = None,
 ) -> list[dict]:
@@ -94,7 +93,6 @@ def run_retrojet_evaluation(
         vec_env.close()
         raise
     summary = []
-    stopped = False
     logger.info("RetroJet parity evaluation ready; startup frames were not recorded.")
     logger.info("Model: %s", model_path)
     logger.info("Artifacts: %s", output_dir)
@@ -169,17 +167,6 @@ def run_retrojet_evaluation(
                                         f"Could not open video writer: {video_path}"
                                     )
                             writer.write(annotated)
-                            if show_window:
-                                display = cv2.resize(
-                                    annotated,
-                                    None,
-                                    fx=3,
-                                    fy=3,
-                                    interpolation=cv2.INTER_NEAREST,
-                                )
-                                cv2.imshow("RetroJet parity evaluation", display)
-                                if cv2.waitKey(1) & 0xFF in (27, ord("q")):
-                                    stopped = True
 
                         if realtime:
                             next_frame_at += base_env.runner.frame_skip / SNES_FPS
@@ -187,7 +174,7 @@ def run_retrojet_evaluation(
                             if delay > 0:
                                 time.sleep(delay)
 
-                        if done or stopped:
+                        if done:
                             break
             finally:
                 if writer is not None:
@@ -216,18 +203,9 @@ def run_retrojet_evaluation(
                 steps,
                 max_x,
             )
-            if stopped:
-                break
     finally:
         base_env.runner.set_video_capture(0, False)
         vec_env.close()
-        if show_window:
-            try:
-                import cv2
-
-                cv2.destroyAllWindows()
-            except Exception:
-                pass
 
     summary_path = output_dir / "summary.json"
     summary_path.write_text(
@@ -235,7 +213,6 @@ def run_retrojet_evaluation(
             {
                 "model": str(Path(model_path).resolve()),
                 "episodes": summary,
-                "stopped_by_user": stopped,
             },
             indent=2,
         ),

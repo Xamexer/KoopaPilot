@@ -70,10 +70,6 @@ def main():
         help="Pin parity evaluation or replay to one level, for example 0x105"
     )
     parser.add_argument(
-        "--no-window", action="store_true",
-        help="Record RetroJet evaluation without opening a live video window"
-    )
-    parser.add_argument(
         "--no-realtime", action="store_true",
         help="Run RetroJet evaluation as fast as possible instead of real time"
     )
@@ -327,7 +323,6 @@ def _run_retrojet_evaluation_mode(config, args):
         model_path=args.model,
         episodes=args.episodes or 3,
         level_id=args.level,
-        show_window=not args.no_window,
         realtime=not args.no_realtime,
         output_dir=args.output_dir,
     )

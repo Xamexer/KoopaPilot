@@ -189,7 +189,7 @@ dashboard so its server and polling cannot disturb timing measurements.
 | Train in RetroJet while watching one live BizHawk viewer | `uv run koopapilot --mode live-demo` |
 | Watch a checkpoint without training | `uv run koopapilot --mode demo --model ./models/model_best.zip` |
 | Evaluate five visible episodes and record video | `uv run koopapilot --mode evaluation --model ./models/model_best.zip --episodes 5` |
-| Inspect deterministic Snes9x playback live and record a parity trace | `uv run koopapilot --mode retrojet-evaluation --model ./models/model_best.zip --episodes 3 --level 0x105` |
+| Export one deterministic Snes9x episode directly to MP4 | `uv run koopapilot --mode retrojet-evaluation --model ./models/model_best.zip --episodes 1 --level 0x105 --no-realtime` |
 | Replay one Snes9x action trace in visible BizHawk | `uv run koopapilot --mode bizhawk-replay --trace ./videos/retrojet-parity-YYYYMMDD-HHMMSS/episode_001.jsonl --level 0x105` |
 | Play manually and inspect reward events | `uv run koopapilot --mode human` |
 | Run only the dashboard | `uv run koopapilot --mode dashboard` |
@@ -223,7 +223,6 @@ comparing a single visible episode with the mean of many parallel rollouts.
 - `--demo-emulators 2 --episodes 10` runs a finite multi-window demo.
 - `--live-demo-port 10000` changes the viewer's socket port.
 - `--level 0x105` pins RetroJet evaluation to one level.
-- `--no-window` records RetroJet evaluation without opening an OpenCV window.
 - `--no-realtime` removes playback throttling and records as fast as possible.
 - `--output-dir ./videos` overrides the artifact parent directory.
 - `--lua-script ./lua/smw_agent.lua` selects a worktree-specific Lua script.
@@ -232,8 +231,14 @@ comparing a single visible episode with the mean of many parallel rollouts.
 
 `retrojet-evaluation` runs exactly one Snes9x environment with deterministic
 model actions. Capture begins only after the core, level, frame stack, and model
-are ready, so startup activity is not counted as gameplay. Press `Q` or Escape
-to stop early.
+are ready, so startup activity is not counted as gameplay. It does not open a
+live window.
+
+Export one episode to MP4 with a single command:
+
+```powershell
+uv run koopapilot --mode retrojet-evaluation --model ./models/model_best.zip --episodes 1 --level 0x105 --no-realtime
+```
 
 Each run creates a timestamped directory below `./videos/retrojet-parity-*`
 containing one MP4 and JSONL step trace per episode plus `summary.json`. The
