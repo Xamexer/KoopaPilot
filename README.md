@@ -8,6 +8,13 @@
   A reinforcement learning project that teaches a PPO policy to play <em>Super Mario World</em> through BizHawk/Lua or the headless RetroJet libretro backend.
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/platform-Windows_x86--64-0078D4" alt="Windows x86-64">
+  <img src="https://img.shields.io/badge/backend-Python_%2B_Rust-5C2D91" alt="Python and Rust backend">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EC4B6" alt="MIT License"></a>
+</p>
+
 ## About the Project
 
 I have been passionate about _Super Mario World_ for a long time and have been active in the SMW scene since 2014. Over the years, I have contributed to and organized countless SMW-related projects. Eventually, I wanted to explore the game from a different angle: build a detailed reinforcement learning environment and teach Mario to play levels through training.
@@ -42,12 +49,12 @@ This repository is the result. It can connect one or more BizHawk emulator insta
 ## Architecture
 
 <p align="center">
-  <img src="docs/images/architecture.png" alt="KoopaPilot SMW application layer above its BizHawk adapter and the separate game-neutral RetroJet engine" width="900">
+  <img src="docs/images/architecture.png" alt="KoopaPilot SMW application layer above its BizHawk and SNES RetroJet backends" width="900">
 </p>
 
 KoopaPilot's BizHawk and RetroJet adapters implement the same environment
 contract: normalized observations, 12 controller actions, and shared reward
-logic. BizHawk favors visibility and debugging; the game-neutral RetroJet
+logic. BizHawk favors visibility and debugging; the SNES-focused RetroJet
 engine supplies high-throughput headless emulation beneath KoopaPilot's SMW
 adapter.
 
@@ -136,9 +143,10 @@ uv pip install -e ../RetroJet
 KoopaPilot uses the single ROM configured by `paths.rom` for both backends;
 the default remains `./roms/Super Mario World.sfc`.
 
-RetroJet itself is game-neutral. KoopaPilot owns the SMW action table, WRAM
-capture plan, state decoder, level initialization, observations, and rewards;
-the native engine receives only raw controller masks and memory ranges.
+RetroJet provides the SNES/libretro runtime. KoopaPilot owns the SMW action
+table, WRAM capture plan, state decoder, level initialization, observations,
+and rewards; the native engine receives only raw controller masks and memory
+ranges.
 
 Quick RetroJet benchmark:
 

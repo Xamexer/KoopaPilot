@@ -1,4 +1,4 @@
-"""SMW compatibility layer over RetroJet's game-neutral Session API."""
+"""SMW compatibility layer over RetroJet's SNES Session API."""
 
 from __future__ import annotations
 

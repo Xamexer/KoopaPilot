@@ -51,7 +51,7 @@
   "level_loading": {
     "_comment": "Full level loads use quoted hexadecimal Lunar Magic IDs",
     "mode": "level_loading",
-    "levels": ["0x105", "0x106"],
+    "levels": ["0x103"],
     "savestate_files": []
   },
 
@@ -137,8 +137,8 @@
 
   "rewards": {
     "_comment": "x_progress_per_pixel: reward only for NEW max X (no backtracking reward)",
-    "x_progress_per_pixel": 0.25,
-    "y_progress_per_pixel": 0.1,
+    "x_progress_per_pixel": 0.0675,
+    "y_progress_per_pixel": 2,
     "goal_reached": 1000.0,
     "coin_collected": 0.0,
     "powerup_upgrade": 20.0,
@@ -146,7 +146,7 @@
     "pipe_door_entered": 50.0,
     "enemy_killed": 10.0,
     "enemy_stunned": 10.0,
-    "death_penalty": -100.0,
+    "death_penalty": -80.0,
     "powerup_downgrade": -10.0,
     "time_penalty_per_step": -0.25,
     "exploration_new_cell": 0.0,
