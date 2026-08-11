@@ -290,32 +290,21 @@ The policy selects one of 12 discrete controller combinations. The action table 
 
 ## Reward Design
 
-The reward calculator favors new level progress and successful exits while discouraging deaths, damage, inactivity, and endless episodes.
+Reward weights are configured in `config.json`. There is no universal set of
+values: suitable weights depend on the level, action space, episode length,
+and training goal, so each project should evaluate and tune them independently.
 
-| Event                                    |    Default reward |
-| ---------------------------------------- | ----------------: |
-| New horizontal progress                  | `+0.25` per pixel |
-| New vertical progress in vertical levels |  `+0.1` per pixel |
-| Newly explored tile cell                 |              `+0` |
-| Goal reached                             |           `+1000` |
-| Coin collected                           |              `+0` |
-| Powerup upgrade                          |             `+20` |
-| 1-UP collected                           |              `+0` |
-| Pipe or door transition                  |             `+50` |
-| Enemy defeated                           |             `+10` |
-| Enemy stunned                            |             `+10` |
-| Death                                    |            `-100` |
-| Powerup loss                             |             `-10` |
-| Time penalty                             |  `-0.25` per step |
-
-Horizontal reward is granted only for new per-episode maximum X positions.
-Returning to previously visited ground therefore cannot farm reward. Large
-coordinate jumps are treated as teleports to prevent savestate loads and
-transitions from creating false progress rewards.
+Horizontal progress is rewarded only at new per-episode maximum X positions.
+Vertical progress works in every level and is rewarded only when Mario reaches
+a new highest point. Returning to an old position or repeatedly jumping to the
+same height therefore cannot farm progress reward. Large coordinate jumps are
+treated as teleports to prevent savestate loads and transitions from creating
+false progress.
 
 `exploration_new_cell` can optionally reward a coarse position once per
-episode. It is disabled by default; when enabled, new cells also reset the
-stagnation timeout without making back-and-forth movement farmable.
+episode. When enabled, new cells also reset the stagnation timeout without
+making back-and-forth movement farmable. Goals, items, enemies, damage, death,
+and time can be weighted independently in the same configuration section.
 
 ## Training Profile
 

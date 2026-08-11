@@ -166,7 +166,7 @@ class DemoManager:
                     max_x = episode.get("max_x", info.get("mario_x", 0))
                     goal = episode.get("goal_reached", info.get("goal_reached", False))
                     completed += 1
-                    logger.info(
+                    logger.debug(
                         "Demo env %s episode %s: reward=%.1f steps=%s max_x=%s goal=%s",
                         idx,
                         completed,
@@ -241,7 +241,7 @@ class DemoManager:
 
         try:
             _validate_model_metadata(metadata, model_stat)
-            logger.info("Loading demo model: %s", model_path)
+            logger.debug("Loading demo model: %s", model_path)
             from stable_baselines3 import PPO
 
             # Deserialize from an in-memory snapshot. On Windows, loading

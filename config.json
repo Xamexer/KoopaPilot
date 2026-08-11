@@ -136,9 +136,9 @@
   },
 
   "rewards": {
-    "_comment": "x_progress_per_pixel: reward only for NEW max X (no backtracking reward)",
-    "x_progress_per_pixel": 0.0675,
-    "y_progress_per_pixel": 2,
+    "_comment": "X and Y progress reward only new episode records; lower Y means a higher position",
+    "x_progress_per_pixel": 0.5,
+    "y_progress_per_pixel": 0.5,
     "goal_reached": 1000.0,
     "coin_collected": 0.0,
     "powerup_upgrade": 20.0,

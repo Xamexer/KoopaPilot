@@ -88,7 +88,6 @@ def compute_reward(state: dict, tracker: EpisodeTracker,
     lives = state.get("lives", 0)
     player_anim = state.get("player_anim", 0)
     sublevel = state.get("sublevel", 0)
-    is_vertical = state.get("is_vertical", False)
     
     # Initialize on first step
     if tracker.is_first_step:
@@ -177,8 +176,8 @@ def compute_reward(state: dict, tracker: EpisodeTracker,
             made_progress = True
             events.append(f"NEW_X +{x_reward:.1f}")
 
-    # --- Y PROGRESS (vertical levels) ---
-    if is_vertical and not teleported:
+    # --- Y PROGRESS (new highest point in any level) ---
+    if not teleported:
         # Y=0 is top, so going up means Y decreases.
         if mario_y < tracker.max_y:
             y_delta = tracker.max_y - mario_y
