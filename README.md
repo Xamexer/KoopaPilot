@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/platform-Windows_x86--64-0078D4" alt="Windows x86-64">
-  <img src="https://img.shields.io/badge/backend-Python_%2B_Rust-5C2D91" alt="Python and Rust backend">
+  <img src="https://img.shields.io/badge/backend-Python-5C2D91" alt="Python backend">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EC4B6" alt="MIT License"></a>
 </p>
 
