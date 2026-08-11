@@ -177,8 +177,9 @@ sublevels that are reachable only through doors or pipes.
 ## Running KoopaPilot
 
 Run commands from the KoopaPilot project directory. Training is the default
-mode, and every active mode starts the dashboard at
-[http://127.0.0.1:8080](http://127.0.0.1:8080).
+mode, and normal active modes start the dashboard at
+[http://127.0.0.1:8080](http://127.0.0.1:8080). The two parity modes skip the
+dashboard so its server and polling cannot disturb timing measurements.
 
 | Goal | Command |
 | --- | --- |
@@ -188,6 +189,8 @@ mode, and every active mode starts the dashboard at
 | Train in RetroJet while watching one live BizHawk viewer | `uv run koopapilot --mode live-demo` |
 | Watch a checkpoint without training | `uv run koopapilot --mode demo --model ./models/model_best.zip` |
 | Evaluate five visible episodes and record video | `uv run koopapilot --mode evaluation --model ./models/model_best.zip --episodes 5` |
+| Export one deterministic Snes9x episode directly to MP4 | `uv run koopapilot --mode retrojet-evaluation --model ./models/model_best.zip --episodes 1 --level 0x105 --no-realtime` |
+| Replay one Snes9x action trace in visible BizHawk | `uv run koopapilot --mode bizhawk-replay --trace ./videos/retrojet-parity-YYYYMMDD-HHMMSS/episode_001.jsonl --level 0x105` |
 | Play manually and inspect reward events | `uv run koopapilot --mode human` |
 | Run only the dashboard | `uv run koopapilot --mode dashboard` |
 
@@ -219,6 +222,44 @@ comparing a single visible episode with the mean of many parallel rollouts.
 - `--no-launch` connects to BizHawk instances that are already running.
 - `--demo-emulators 2 --episodes 10` runs a finite multi-window demo.
 - `--live-demo-port 10000` changes the viewer's socket port.
+- `--level 0x105` pins RetroJet evaluation to one level.
+- `--no-realtime` removes playback throttling and records as fast as possible.
+- `--output-dir ./videos` overrides the artifact parent directory.
+- `--lua-script ./lua/smw_agent.lua` selects a worktree-specific Lua script.
+
+### RetroJet parity experiment
+
+`retrojet-evaluation` runs exactly one Snes9x environment with deterministic
+model actions. Capture begins only after the core, level, frame stack, and model
+are ready, so startup activity is not counted as gameplay. It does not open a
+live window.
+
+Export one episode to MP4 with a single command:
+
+```powershell
+uv run koopapilot --mode retrojet-evaluation --model ./models/model_best.zip --episodes 1 --level 0x105 --no-realtime
+```
+
+Each run creates a timestamped directory below `./videos/retrojet-parity-*`
+containing one MP4 and JSONL step trace per episode plus `summary.json`. The
+trace includes action indices, button vectors, rewards, observation hashes,
+Mario/camera state, goal-related RAM values, and active sprites. This makes it
+possible to see what Snes9x actually rendered when the dashboard reports a
+goal, then locate the first state divergence from a BizHawk run.
+
+BizHawk previously advanced two extra `frame_skip` intervals after every reset:
+one after Lua loaded the level and one Python no-op before the first policy
+action. With the default value this put visible playback eight frames ahead of
+RetroJet, so Mario's speed and sprite states no longer represented the gameplay
+the model was trained on. Both backends now expose the fresh reset state before
+advancing gameplay.
+
+Feed one generated JSONL file to `bizhawk-replay` to apply the identical action
+sequence in a visible BizHawk instance. It writes a BizHawk MP4,
+`comparison.jsonl`, and `summary.json` below `./videos/bizhawk-parity-*`. The
+comparison reports the first different stacked observation and the differing
+RAM fields for every step. BizHawk now also waits for the policy's first real
+action after reset instead of inserting an extra four-frame no-op interval.
 - `uv run koopapilot --help` lists every CLI option.
 
 Checkpoints require compatible observation and action spaces, frame stacking,

@@ -25,6 +25,8 @@ def main():
             "dashboard",
             "demo",
             "live-demo",
+            "retrojet-evaluation",
+            "bizhawk-replay",
         ],
         default="training", help="Operation mode"
     )
@@ -63,6 +65,26 @@ def main():
         "--vis", action="store_true",
         help="Show colored tile-grid and sprite overlays in BizHawk"
     )
+    parser.add_argument(
+        "--level", type=lambda value: int(value, 0), default=None,
+        help="Pin parity evaluation or replay to one level, for example 0x105"
+    )
+    parser.add_argument(
+        "--no-realtime", action="store_true",
+        help="Run RetroJet evaluation as fast as possible instead of real time"
+    )
+    parser.add_argument(
+        "--output-dir", default=None,
+        help="Artifact directory override for parity evaluation or replay"
+    )
+    parser.add_argument(
+        "--trace", default=None,
+        help="RetroJet JSONL trace to replay in BizHawk"
+    )
+    parser.add_argument(
+        "--lua-script", default=None,
+        help="Lua script path override, useful when testing from a worktree"
+    )
     args = parser.parse_args()
 
     # Load config
@@ -74,6 +96,10 @@ def main():
         "type", "bizhawk"
     )
     config["_backend"] = backend
+    if args.lua_script:
+        config.setdefault("paths", {})["lua_script"] = os.path.abspath(
+            args.lua_script
+        )
     if args.vis:
         config.setdefault("flags", {})["visibility"] = True
 
@@ -85,11 +111,13 @@ def main():
 
     _configure_runtime(config)
 
-    # Start dashboard in background
-    dash_thread = threading.Thread(
-        target=_start_dashboard_background, args=(config,), daemon=True
-    )
-    dash_thread.start()
+    # The parity viewer writes its own artifacts and does not need a second
+    # server thread or dashboard port during deterministic playback.
+    if args.mode not in {"retrojet-evaluation", "bizhawk-replay"}:
+        dash_thread = threading.Thread(
+            target=_start_dashboard_background, args=(config,), daemon=True
+        )
+        dash_thread.start()
 
     if args.mode == "human":
         _run_human_mode(config, args)
@@ -99,6 +127,10 @@ def main():
         _run_demo_mode(config, args)
     elif args.mode == "live-demo":
         _run_live_demo_mode(config, args)
+    elif args.mode == "retrojet-evaluation":
+        _run_retrojet_evaluation_mode(config, args)
+    elif args.mode == "bizhawk-replay":
+        _run_bizhawk_replay_mode(config, args)
     elif backend == "retrojet":
         _run_retrojet_training_mode(config, args)
     else:
@@ -282,6 +314,35 @@ def _run_live_demo_mode(config, args):
         demo_thread.join(timeout=5)
 
 
+def _run_retrojet_evaluation_mode(config, args):
+    """Show and record deterministic playback inside the Snes9x backend."""
+    from .retrojet_evaluation import run_retrojet_evaluation
+
+    run_retrojet_evaluation(
+        config,
+        model_path=args.model,
+        episodes=args.episodes or 3,
+        level_id=args.level,
+        realtime=not args.no_realtime,
+        output_dir=args.output_dir,
+    )
+
+
+def _run_bizhawk_replay_mode(config, args):
+    """Replay a recorded RetroJet action sequence in visible BizHawk."""
+    if not args.trace:
+        raise ValueError("--trace is required for --mode bizhawk-replay")
+    from .parity_replay import run_bizhawk_replay
+
+    run_bizhawk_replay(
+        config,
+        trace_path=args.trace,
+        level_id=args.level,
+        no_launch=args.no_launch,
+        output_dir=args.output_dir,
+    )
+
+
 def _live_model_path(model_dir: str, resume_path: str | None) -> str:
     """Choose a writable viewer mirror that never aliases the resume source."""
     live_path = os.path.join(model_dir, "model_live.zip")
@@ -306,6 +367,10 @@ def _backend_override_for_mode(
     """Return the backend actually used by a mode before config validation."""
     if mode == "live-demo":
         return "retrojet"
+    if mode == "retrojet-evaluation":
+        return "retrojet"
+    if mode == "bizhawk-replay":
+        return "bizhawk"
     if mode in {"demo", "evaluation", "human"}:
         return "bizhawk"
     if mode == "training":
