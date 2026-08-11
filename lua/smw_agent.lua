@@ -560,6 +560,7 @@ local function read_game_state()
     local in_air = read_u8(0x0072)
     local on_ground = read_u8(0x13EF)
     local climbing = read_u8(0x0074)
+    local ducking = read_u8(0x0073)
     local player_anim = read_u8(0x0071)
     local coins = read_u8(0x0DBF)
     local lives = read_u8(0x0DBE)
@@ -597,6 +598,7 @@ local function read_game_state()
         in_air = in_air,
         on_ground = on_ground,
         climbing = climbing,
+        ducking = ducking,
         player_anim = player_anim,
         coins = coins,
         lives = lives,
@@ -1082,7 +1084,9 @@ local function main()
             current_action = nil
             last_reward_event = ""
             last_reward_event_timer = 0
-            -- Don't skip frameadvance - fall through to normal frame handling
+            -- Report the freshly loaded state before advancing any gameplay
+            -- frames. RetroJet captures its reset state at this same boundary.
+            goto continue
         elseif response.type == "close" then
             console.log(string.format("[Emu #%d] Server requested close.", CONFIG.emulator_id))
             break

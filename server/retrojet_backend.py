@@ -40,12 +40,14 @@ class RetroJetVecEnv(VecEnv):
         self._rewards = np.zeros(self.num_envs, dtype=np.float32)
         self._dones = np.zeros(self.num_envs, dtype=bool)
         self._infos = [{} for _ in range(self.num_envs)]
+        self.last_states = [None for _ in range(self.num_envs)]
         self._actions: Optional[np.ndarray] = None
 
     def reset(self):
         states = self.runner.reset_all()
         for idx, state in enumerate(states):
             state = _prepare_state(state, 0)
+            self.last_states[idx] = state
             self.trackers[idx] = EpisodeTracker()
             self.step_counts[idx] = 0
             init_tracker_from_state(self.trackers[idx], state, self.config)
@@ -65,6 +67,7 @@ class RetroJetVecEnv(VecEnv):
         for idx, state in enumerate(raw_states):
             self.step_counts[idx] += 1
             state = _prepare_state(state, self.step_counts[idx])
+            self.last_states[idx] = state
             obs = build_observation(state, self.config)
             reward, event, done = compute_reward(
                 state, self.trackers[idx], self.config

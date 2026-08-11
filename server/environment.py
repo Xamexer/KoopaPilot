@@ -70,6 +70,8 @@ class SMWEnvironment(gym.Env):
         self._action_ready = threading.Event()
         self._pending_state = None
         self._pending_response = None
+        self.last_state = None
+        self.last_transition_state = None
 
         # Before first reset(), respond immediately so emulator startup cannot
         # block while the remaining instances and the agent are initialized.
@@ -127,6 +129,9 @@ class SMWEnvironment(gym.Env):
 
         if state is None:
             return self._last_obs, 0.0, True, False, {}
+
+        self.last_state = state
+        self.last_transition_state = state
 
         # Compute observation and reward
         obs = build_observation(state, self.config)
@@ -219,14 +224,14 @@ class SMWEnvironment(gym.Env):
                 state = self._pending_state
 
         if state:
+            self.last_state = state
             obs = build_observation(state, self.config)
             # Initialize tracker with state values to prevent false rewards
             init_tracker_from_state(self.tracker, state, self.config)
             self._last_obs = obs
 
-        # Respond with no-op to start the episode
-        with self._lock:
-            self._pending_response = NO_OP_RESPONSE.copy()
-            self._action_ready.set()
+        # Leave Lua blocked on the freshly loaded state until step() supplies
+        # the policy's first real action. Sending a no-op here inserted one
+        # extra frame-skip interval that RetroJet never executes.
 
         return self._last_obs, {}
